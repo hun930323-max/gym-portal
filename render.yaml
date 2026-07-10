@@ -1,0 +1,17 @@
+# Render Blueprint — 무료 테스트 배포용
+# 무료 플랜은 영구 디스크가 없어 재배포 시 data/db.json 이 초기화됩니다(테스트엔 무방).
+# 실서비스는 plan을 starter로 올리고 disk(영구 볼륨) 또는 PostgreSQL을 붙이세요.
+services:
+  - type: web
+    name: gym-portal
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: node server.js
+    autoDeploy: true
+    envVars:
+      - key: SESSION_SECRET
+        generateValue: true
+      # 유료 플랜 + 디스크 사용 시 아래 주석 해제 후 disk 마운트 경로 지정
+      # - key: DATA_DIR
+      #   value: /var/data
