@@ -158,7 +158,7 @@ app.post("/inbox/request/:id", auth, (req, res) => { D.setRequestStatus(req.gymI
 app.get("/settings", auth, (req, res) => { const { f, e } = clearFlash(req); page(req, res, "settings", "매장 설정", V.settingsBody(D.getSettings(req.gymId)), { flash: f, flashErr: e }); });
 app.post("/settings", auth, (req, res) => {
   const b = req.body;
-  D.setSettings(req.gymId, { gym_name: b.gym_name, price: b.price, trainers: b.trainers, notices: b.notices, events: b.events });
+  D.setSettings(req.gymId, { gym_name: b.gym_name, price: b.price, trainers: b.trainers, notices: b.notices, events: b.events, facility: b.facility, gx_schedule: b.gx_schedule, rental: b.rental, lostfound: b.lostfound, parking: b.parking });
   if (b.gym_name && req.gym) { req.gym.name = b.gym_name; D.save(); }
   flash(req, "매장 설정이 저장되었습니다. (챗봇에 반영)");
   res.redirect("/settings");

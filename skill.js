@@ -16,6 +16,33 @@ const utterOf = (body) => body?.userRequest?.utterance || "";
 const phoneOf = (body) => { const m = utterOf(body).match(/01\d{8,9}/); return m ? m[0] : null; };
 const botUserKey = (body) => body?.userRequest?.user?.id || null;
 const settingsOf = (body) => D.getSettings(gymOf(body));
+const PORTAL_URL = process.env.PORTAL_URL || "https://gym-portal-hgbe.onrender.com";
+
+// 출석 스트릭/잔디밭 유틸
+const dayIdx = (s) => Math.floor(Date.parse(s + "T00:00:00Z") / 86400000);
+const todayStr = () => new Date().toISOString().slice(0, 10);
+function streakOf(dates) {
+  if (!dates.length) return 0;
+  const set = new Set(dates.map(dayIdx));
+  let t = dayIdx(todayStr());
+  if (!set.has(t)) t -= 1; // 어제까지 연속도 인정
+  let n = 0;
+  while (set.has(t)) { n++; t--; }
+  return n;
+}
+function bestStreak(dates) {
+  const idx = [...new Set(dates.map(dayIdx))].sort((a, b) => a - b);
+  let best = 0, cur = 0, prev = null;
+  for (const d of idx) { cur = (prev !== null && d === prev + 1) ? cur + 1 : 1; best = Math.max(best, cur); prev = d; }
+  return best;
+}
+function calendarGrid(dates) {
+  const set = new Set(dates.map(dayIdx));
+  const today = dayIdx(todayStr());
+  let out = "";
+  for (let i = 27; i >= 0; i--) { out += set.has(today - i) ? "🟩" : "⬜"; if (i % 7 === 0 && i !== 0) out += "\n"; }
+  return out;
+}
 
 // 회원 식별: ① botUserKey로 이미 연결된 회원 → 자동 ② 전화번호 최초 입력(=동의) → 연결 후 반환 ③ 미확인 → 동의·입력 안내
 function resolveMember(body) {
@@ -158,6 +185,97 @@ function register(app) {
       title: `✅ ${type} 신청 접수`,
       description: `${m.name}님 · ${type} 신청\n· 접수번호: Q${r.id}\n담당자가 확인 후 연락드릴게요.`,
       buttons: [btnMsg("회원권 조회")],
+    } }], MENU));
+  });
+
+  // 출석 체크 (실 회원 · 오늘 1회) → 포털 attendance 기록
+  app.post("/skill/checkin", (req, res) => {
+    const r = resolveMember(req.body);
+    if (r.needAuth) return consentCard(res);
+    if (r.notFound) return notFoundCard(res);
+    const m = r.member;
+    const c = D.checkinMember(r.gid, m.id);
+    const st = streakOf(c.dates);
+    const outs = [];
+    if (r.firstLink) outs.push(text(`✅ ${m.name}님, 본인 확인이 완료됐어요!`));
+    outs.push({ basicCard: {
+      title: c.already ? `${m.name}님, 오늘은 이미 출석했어요 👍` : `✅ ${m.name}님 출석 완료!`,
+      description: `🔥 연속 출석 ${st}일\n📅 누적 출석 ${c.dates.length}회\n\n꾸준함이 최고의 근육이에요. 오늘도 화이팅! 💪`,
+      buttons: [btnMsg("출석 현황"), btnMsg("PT 현황")],
+    } });
+    res.json(skill(outs, MENU));
+  });
+
+  // 출석 현황 (잔디밭)
+  app.post("/skill/attendance", (req, res) => {
+    const r = resolveMember(req.body);
+    if (r.needAuth) return consentCard(res);
+    if (r.notFound) return notFoundCard(res);
+    const m = r.member;
+    const dates = D.attendanceDates(r.gid, m.id);
+    if (!dates.length) return res.json(skill([text(`${m.name}님, 아직 출석 기록이 없어요.\n오늘 '출석 체크'로 첫 잔디를 심어보세요! 🌱`)], [qr("출석 체크", "출석 체크"), ...MENU]));
+    const st = streakOf(dates), best = bestStreak(dates);
+    res.json(skill([text(`📅 ${m.name}님 최근 4주 출석\n\n${calendarGrid(dates)}\n\n🔥 현재 연속 ${st}일 · 🏆 최고 연속 ${best}일 · 누적 ${dates.length}회`)], [qr("출석 체크", "출석 체크"), ...MENU]));
+  });
+
+  // 재등록 안내/신청
+  app.post("/skill/renew", (req, res) => {
+    const utter = utterOf(req.body);
+    const r = resolveMember(req.body);
+    if (r.needAuth) return consentCard(res);
+    if (r.notFound) return notFoundCard(res);
+    const m = r.member, s = settingsOf(req.body);
+    const d = ddayOf(m.expire_date);
+    if (/신청|접수|확정|연장할|등록할/.test(utter)) {
+      const rq = D.createRequest(r.gid, { type: "재등록", name: m.name, phone: m.phone, member_id: m.id, detail: `${m.membership_type || ""} 만료 ${m.expire_date || ""}` });
+      return res.json(skill([{ basicCard: { title: "✅ 재등록 신청 접수", description: `${m.name}님 재등록 신청이 접수됐어요.\n· 접수번호: Q${rq.id}\n담당자가 확인 후 안내드릴게요.`, buttons: [btnMsg("가격 안내")] } }], MENU));
+    }
+    res.json(skill([{ basicCard: {
+      title: `🔄 ${m.name}님 재등록 안내`,
+      description: `현재 회원권: ${m.membership_type || "-"}\n만료일: ${m.expire_date || "-"}${d != null ? ` (D-${d})` : ""}\n\n💰 ${s.price || "가격 정보 준비 중"}\n\n지금 재등록하면 공백 없이 이어집니다!`,
+      buttons: [btnMsg("재등록 신청"), btnMsg("가격 안내")],
+    } }], MENU));
+  });
+
+  // PT 예약 조회/신청 (실 회원)
+  app.post("/skill/reserve", (req, res) => {
+    const utter = utterOf(req.body);
+    const r = resolveMember(req.body);
+    if (r.needAuth) return consentCard(res);
+    if (r.notFound) return notFoundCard(res);
+    const m = r.member;
+    if (!(m.pt_total > 0)) return res.json(skill([text(`${m.name}님은 등록된 PT 이용권이 없어요.\n첫 상담·체험은 무료입니다!`)], [qr("무료 상담 신청", "무료 상담 신청")]));
+    if (/신청|예약해|예약하|잡아|해줘/.test(utter)) {
+      const rq = D.createRequest(r.gid, { type: "PT예약", name: m.name, phone: m.phone, member_id: m.id, detail: utter.replace(/01\d{8,9}/g, "").slice(0, 40) });
+      return res.json(skill([{ basicCard: { title: "✅ PT 예약 요청 접수", description: `${m.name}님 · 담당 ${m.pt_trainer || "트레이너"}\n· 접수번호: Q${rq.id}\n트레이너가 시간 조율 후 확정해드려요.`, buttons: [btnMsg("PT 현황")] } }], MENU));
+    }
+    const ses = D.memberSessions(r.gid, m.id);
+    const up = ses.upcoming.slice(0, 3).map((x) => `• ${x.date} ${x.time} (${x.trainer})`).join("\n") || "예정된 예약이 없어요";
+    const pa = ses.past.slice(0, 3).map((x) => `• ${x.date} ${x.trainer}${x.feedback ? ` — ${x.feedback}` : ""}`).join("\n") || "완료된 세션이 없어요";
+    res.json(skill([{ basicCard: {
+      title: `📅 ${m.name}님 PT 예약`,
+      description: `[예정]\n${up}\n\n[최근 완료]\n${pa}\n\n잔여 ${m.pt_remain}/${m.pt_total}회 · 담당 ${m.pt_trainer || "미지정"}`,
+      buttons: [btnMsg("PT 예약 신청"), btnMsg("PT 현황")],
+    } }], MENU));
+  });
+
+  // 매장 정보(설정 기반, 회원식별 불필요)
+  const infoSkill = (path, emoji, title, key, empty) => app.post(path, (req, res) => {
+    const s = settingsOf(req.body);
+    res.json(skill([text(`${emoji} ${title}\n\n${s[key] || empty}`)], MENU));
+  });
+  infoSkill("/skill/facility", "🏢", "시설 안내", "facility", "시설 정보가 아직 등록되지 않았어요.");
+  infoSkill("/skill/gx", "📅", "수업 시간표", "gx_schedule", "시간표가 아직 등록되지 않았어요.");
+  infoSkill("/skill/rental", "🧺", "대여 안내", "rental", "대여 정보가 아직 등록되지 않았어요.");
+  infoSkill("/skill/lostfound", "🔍", "분실물 안내", "lostfound", "분실물 안내가 아직 등록되지 않았어요.");
+  infoSkill("/skill/parking", "🚗", "주차 안내", "parking", "주차 정보가 아직 등록되지 않았어요.");
+
+  // 관리자 — 개인정보 노출 금지, 웹 포털로 안내 (PII 게이트)
+  app.post("/skill/admin", (req, res) => {
+    res.json(skill([{ basicCard: {
+      title: "🔒 관리자 기능은 웹 포털에서",
+      description: "회원 정보·매출·통계 등 관리 기능은 보안을 위해 사장님 전용 웹 포털에서만 제공됩니다.\n챗봇 대화에서는 개인정보가 노출되지 않습니다.",
+      buttons: [{ action: "webLink", label: "사장님 포털 열기", webLinkUrl: PORTAL_URL + "/login" }],
     } }], MENU));
   });
 }

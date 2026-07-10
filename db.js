@@ -50,6 +50,11 @@ function seed() {
     trainers: "김코치(웨이트·체형교정), 이코치(다이어트·재활), 박코치(필라테스·바디프로필)",
     notices: "매일 14:00~14:30 청소 / 7/17 시설점검 22시 조기마감",
     events: "신규 3개월 등록 시 PT 2회 무료 (D-13, 선착순 8/30)",
+    facility: "1층 프리웨이트존 / 2층 유산소·GX룸 / 3층 필라테스·샤워실\n· 인바디, 스쿼트랙 6대, 러닝머신 20대\n· 남녀 샤워실·사우나·개인락커 완비",
+    gx_schedule: "[평일] 07:00 모닝요가 · 19:00 스피닝 · 20:00 필라테스\n[주말] 10:00 GX순환 · 11:00 코어\n※ 수업 20분 전 앱에서 예약",
+    rental: "운동복 2,000원 / 수건 무료 / 개인락커 월 10,000원\n· 프론트에서 신청·반납",
+    lostfound: "분실물은 프론트에서 최대 2주 보관합니다.\n· 습득/분실 문의: 프론트 또는 본 채팅",
+    parking: "지하 1~2층 회원 무료 2시간 (차량번호 등록 시)\n· 초과 시 10분당 500원 · 만차 시 인근 공영주차장 이용",
     send_enabled: false,
   };
   const M = (name, phone, type, expDays, joinDays, ptTotal, ptRemain, ptTrainer, locker) => {
@@ -93,7 +98,7 @@ function createOwnerWithGym({ email, password, name, gymName }) {
   db.gyms.push({ id: gymId, name: gymName, phone: "", address: "", created_at: todayPlus(0) });
   const owner = { id: nextId(), gym_id: gymId, email, password_hash: bcrypt.hashSync(password, 8), name, created_at: todayPlus(0) };
   db.owners.push(owner);
-  db.settings[gymId] = { gym_name: gymName, price: "", trainers: "", notices: "", events: "", send_enabled: false };
+  db.settings[gymId] = { gym_name: gymName, price: "", trainers: "", notices: "", events: "", facility: "", gx_schedule: "", rental: "", lostfound: "", parking: "", send_enabled: false };
   save();
   return { owner };
 }
@@ -194,10 +199,30 @@ function createRequest(gymId, { type, name, phone, detail, member_id }) { const 
 // 회원 식별: botUserKey ↔ 회원 매핑 (최초 1회 연결 후 자동 식별)
 function memberByBotUser(gymId, key) { if (!key) return null; const b = db.bot_users.find((x) => x.gym_id === gymId && x.bot_user_key === key); if (!b) return null; return db.members.find((m) => m.id === b.member_id) || null; }
 function linkBotUser(gymId, key, memberId) { if (!key) return null; let b = db.bot_users.find((x) => x.gym_id === gymId && x.bot_user_key === key); if (b) { b.member_id = memberId; } else { b = { id: nextId(), gym_id: gymId, bot_user_key: key, member_id: memberId, consent_at: new Date().toISOString().slice(0, 16).replace("T", " "), linked_at: todayPlus(0) }; db.bot_users.push(b); } save(); return b; }
+// 출석: 오늘 1회 체크인(중복 방지), 회원 출석일 목록
+function checkinMember(gymId, memberId) {
+  const today = todayPlus(0);
+  const exists = db.attendance.find((a) => a.gym_id === gymId && a.member_id === memberId && a.date === today);
+  if (!exists) { db.attendance.push({ id: nextId(), gym_id: gymId, member_id: memberId, date: today }); save(); }
+  return { already: !!exists, dates: attendanceDates(gymId, memberId) };
+}
+function attendanceDates(gymId, memberId) {
+  return db.attendance.filter((a) => a.gym_id === gymId && a.member_id === memberId).map((a) => a.date).sort();
+}
+// PT 예약(예정)·완료 세션
+function memberSessions(gymId, memberId) {
+  const s = db.pt_sessions.filter((x) => x.gym_id === gymId && x.member_id === memberId);
+  const today = todayPlus(0);
+  return {
+    upcoming: s.filter((x) => x.status === "예약" && x.date >= today).sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time)),
+    past: s.filter((x) => x.status === "완료").sort((a, b) => (b.date + b.time).localeCompare(a.date + a.time)),
+  };
+}
 
 module.exports = {
   load, save, reseed, todayPlus, ddayOf,
   gymByBot, findMemberByPhone, createLead, createRequest, memberByBotUser, linkBotUser,
+  checkinMember, attendanceDates, memberSessions,
   getOwnerByEmail, createOwnerWithGym, verifyOwner, getOwner, getGym,
   members, member, ptMembers, leads, requests, sendLogs, getSettings, setSettings,
   upsertMember, updateMember, deleteMember, addPtSession, ptSessions,

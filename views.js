@@ -255,6 +255,13 @@ function settingsBody(s) {
 <label>강사 소개</label><textarea name="trainers" rows="2">${esc(s.trainers || "")}</textarea>
 <label>공지사항</label><textarea name="notices" rows="2">${esc(s.notices || "")}</textarea>
 <label>이벤트</label><textarea name="events" rows="2">${esc(s.events || "")}</textarea>
+</div>
+<div class="panel"><h2>매장 안내 (챗봇 자동응답)</h2>
+<label>시설 안내</label><textarea name="facility" rows="3">${esc(s.facility || "")}</textarea>
+<label>수업 시간표</label><textarea name="gx_schedule" rows="3">${esc(s.gx_schedule || "")}</textarea>
+<label>대여 안내</label><textarea name="rental" rows="2">${esc(s.rental || "")}</textarea>
+<label>분실물 안내</label><textarea name="lostfound" rows="2">${esc(s.lostfound || "")}</textarea>
+<label>주차 안내</label><textarea name="parking" rows="2">${esc(s.parking || "")}</textarea>
 <button class="btn" style="margin-top:16px">저장</button></div></form>`;
 }
 function sendsBody(s, logs) {
