@@ -2,6 +2,7 @@
 // 네이티브 의존성 없이 어디서든 구동. 운영 전환 시 이 파일만 PostgreSQL로 교체하면 됨.
 const fs = require("fs");
 const path = require("path");
+const crypto = require("crypto");
 const bcrypt = require("bcryptjs");
 
 // 데이터 저장 경로: 환경변수 DATA_DIR 로 영구 볼륨을 지정하면 재배포에도 데이터 유지
@@ -184,17 +185,51 @@ function deleteMember(gymId, id) {
   db.members = db.members.filter((m) => !(m.gym_id === gymId && m.id === id));
   save();
 }
-function addPtSession(gymId, memberId, { trainer, date, time, status, feedback }) {
-  db.pt_sessions.push({ id: nextId(), gym_id: gymId, member_id: memberId, trainer, date, time, status, feedback });
+function addPtSession(gymId, memberId, { trainer, date, time, status, feedback, homework }) {
+  const s = { id: nextId(), gym_id: gymId, member_id: memberId, trainer, date, time, status, feedback: feedback || "", homework: homework || "" };
+  db.pt_sessions.push(s);
   // 완료 시 잔여 차감
   if (status === "완료") { const m = member(gymId, memberId); if (m && m.pt_remain > 0) m.pt_remain -= 1; }
   save();
+  return s;
 }
 function ptSessions(gymId, memberId) { return byGym("pt_sessions", gymId).filter((s) => s.member_id === memberId).sort((a, b) => (b.date + b.time).localeCompare(a.date + a.time)); }
 
 function setLeadStatus(gymId, id, status) { const l = db.leads.find((x) => x.gym_id === gymId && x.id === id); if (l) { l.status = status; save(); } }
 function setRequestStatus(gymId, id, status) { const r = db.requests.find((x) => x.gym_id === gymId && x.id === id); if (r) { r.status = status; save(); } }
-function addSendLog(gymId, entry) { db.send_logs.push({ id: nextId(), gym_id: gymId, sent_at: new Date().toISOString().slice(0, 16).replace("T", " "), ...entry }); save(); }
+function addSendLog(gymId, entry) { const log = { id: nextId(), gym_id: gymId, sent_at: new Date().toISOString().slice(0, 16).replace("T", " "), ...entry }; db.send_logs.push(log); save(); return log; }
+
+// 알림톡 발송 어댑터 (Solapi 예시). 자격증명 미설정 시 dry-run.
+function sendAlimtalk({ phone, message, variables }) {
+  const key = process.env.SOLAPI_API_KEY, secret = process.env.SOLAPI_API_SECRET;
+  const pfId = process.env.SOLAPI_PFID, templateId = process.env.SOLAPI_TEMPLATE_ID, from = process.env.SEND_FROM;
+  if (!key || !secret || !pfId || !templateId || !from) return Promise.resolve({ dryRun: true });
+  const date = new Date().toISOString();
+  const salt = crypto.randomBytes(16).toString("hex");
+  const signature = crypto.createHmac("sha256", secret).update(date + salt).digest("hex");
+  const body = { message: { to: String(phone).replace(/\D/g, ""), from: String(from).replace(/\D/g, ""), type: "ATA", text: message, kakaoOptions: { pfId, templateId, variables: variables || {}, disableSms: false } } };
+  return fetch("https://api.solapi.com/messages/v4/send", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `HMAC-SHA256 apiKey=${key}, date=${date}, salt=${salt}, signature=${signature}` },
+    body: JSON.stringify(body),
+  }).then(async (r) => { const t = await r.json().catch(() => ({})); return r.ok ? { sent: true, id: t.messageId || t.groupId || "ok" } : { error: (t && (t.errorMessage || t.message)) || ("HTTP " + r.status) }; })
+    .catch((e) => ({ error: e.message }));
+}
+
+// 회원에게 알림 발송 + 이력 기록 (send_enabled + 대행사 설정 시 실발송, 아니면 dry-run)
+function notifyMember(gymId, { member_id, phone, name, kind, message, variables }) {
+  const s = getSettings(gymId);
+  const provider = !!(process.env.SOLAPI_API_KEY && process.env.SOLAPI_PFID && process.env.SOLAPI_TEMPLATE_ID);
+  const willSend = !!s.send_enabled && provider;
+  const log = addSendLog(gymId, { kind: kind || "PT피드백", target: phone, member_id: member_id || null, message, status: willSend ? "sent" : "dry-run" });
+  if (willSend) {
+    sendAlimtalk({ phone, message, variables }).then((r) => {
+      if (r && r.error) { log.status = "error"; log.error = r.error; save(); }
+      else if (r && r.id) { log.provider_id = r.id; save(); }
+    }).catch(() => {});
+  }
+  return { status: log.status, log };
+}
 
 // ── 집계(대시보드/리포트) ──
 const dayIdx = (s) => Math.floor(Date.parse(s + "T00:00:00Z") / 86400000);
@@ -272,5 +307,5 @@ module.exports = {
   getOwnerByEmail, createOwnerWithGym, verifyOwner, getOwner, getGym,
   members, member, ptMembers, leads, requests, sendLogs, getSettings, setSettings,
   upsertMember, updateMember, deleteMember, addPtSession, ptSessions,
-  setLeadStatus, setRequestStatus, addSendLog, metrics,
+  setLeadStatus, setRequestStatus, addSendLog, notifyMember, metrics,
 };

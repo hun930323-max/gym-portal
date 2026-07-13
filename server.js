@@ -148,9 +148,25 @@ app.get("/pt", auth, (req, res) => {
 });
 app.post("/pt/:memberId/session", auth, (req, res) => {
   const b = req.body;
-  D.addPtSession(req.gymId, Number(req.params.memberId), { trainer: b.trainer, date: b.date, time: b.time, status: b.status, feedback: b.feedback });
-  flash(req, "세션이 기록되었습니다.");
-  res.redirect("/members/" + req.params.memberId);
+  const memberId = Number(req.params.memberId);
+  const date = b.date || D.todayPlus(0);
+  D.addPtSession(req.gymId, memberId, { trainer: b.trainer, date, time: b.time, status: b.status, feedback: b.feedback, homework: b.homework });
+  let note = "세션이 기록되었습니다.";
+  if (b.status === "완료") {
+    const m = D.member(req.gymId, memberId); // addPtSession 후 잔여 반영됨
+    if (m && m.phone) {
+      const s = D.getSettings(req.gymId);
+      const gymName = s.gym_name || (req.gym && req.gym.name) || "";
+      const msg = `[${gymName}] PT 세션 안내\n${m.name}님, 오늘(${date}) PT 수고하셨어요!\n\n· 담당: ${b.trainer || "트레이너"}\n· 피드백: ${b.feedback || "-"}\n· 숙제: ${b.homework || "-"}\n\n남은 PT ${m.pt_remain}회. 다음 시간에 봬요!`;
+      const variables = { "#{이름}": m.name, "#{날짜}": date, "#{담당}": b.trainer || "", "#{피드백}": b.feedback || "-", "#{숙제}": b.homework || "-", "#{잔여}": String(m.pt_remain) };
+      const r = D.notifyMember(req.gymId, { member_id: m.id, phone: m.phone, name: m.name, kind: "PT피드백", message: msg, variables });
+      note += r.status === "sent" ? " 회원에게 알림톡을 발송했습니다." : " 알림톡 초안이 발송 관리에 기록됐어요(dry-run). 실발송은 발송 관리에서 켜세요.";
+    } else {
+      note += " (회원 전화번호가 없어 알림톡은 생략됨)";
+    }
+  }
+  flash(req, note);
+  res.redirect("/members/" + memberId);
 });
 
 // ── 리포트 ──

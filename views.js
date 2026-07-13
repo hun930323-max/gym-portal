@@ -162,7 +162,7 @@ function membersBody(list, D, q) {
 <tbody>${rows}</tbody></table></div>`;
 }
 function memberDetailBody(m, sessions, D) {
-  const sRows = sessions.map((s) => `<tr><td>${esc(s.date)} ${esc(s.time || "")}</td><td>${esc(s.trainer || "")}</td><td><span class="badge ${s.status === "완료" ? "b-green" : s.status === "노쇼" ? "b-red" : "b-gray"}">${esc(s.status)}</span></td><td>${esc(s.feedback || "-")}</td></tr>`).join("") || `<tr><td colspan="4" class="muted">기록 없음</td></tr>`;
+  const sRows = sessions.map((s) => `<tr><td>${esc(s.date)} ${esc(s.time || "")}</td><td>${esc(s.trainer || "")}</td><td><span class="badge ${s.status === "완료" ? "b-green" : s.status === "노쇼" ? "b-red" : "b-gray"}">${esc(s.status)}</span></td><td>${esc(s.feedback || "-")}</td><td>${esc(s.homework || "-")}</td></tr>`).join("") || `<tr><td colspan="5" class="muted">기록 없음</td></tr>`;
   const f = (name, val, type) => `<div><label>${name}</label><input name="${name === "이름" ? "name" : ""}" ></div>`;
   return `<h1>${esc(m.name)} <span class="muted" style="font-size:14px">${esc(maskPhone(m.phone))}</span></h1>
 <div class="sub"><a href="/members">← 회원 목록</a></div>
@@ -188,7 +188,7 @@ function memberDetailBody(m, sessions, D) {
 <form method="POST" action="/members/${m.id}/delete" style="display:inline" onsubmit="return confirm('삭제할까요?')"><button class="btn gray sm" style="margin-top:10px">회원 삭제</button></form>
 </div>
 <div class="panel"><h2>PT 세션 기록</h2>
-<table><thead><tr><th>일시</th><th>강사</th><th>상태</th><th>피드백</th></tr></thead><tbody>${sRows}</tbody></table>
+<table><thead><tr><th>일시</th><th>강사</th><th>상태</th><th>피드백</th><th>숙제</th></tr></thead><tbody>${sRows}</tbody></table>
 <form method="POST" action="/pt/${m.id}/session" style="margin-top:14px">
 <div class="row">
 <div><label>날짜</label><input name="date" value="${esc(D.todayPlus(0))}"></div>
@@ -197,7 +197,9 @@ function memberDetailBody(m, sessions, D) {
 <div><label>상태</label><select name="status"><option>완료</option><option>예약</option><option>노쇼</option><option>취소</option></select></div>
 </div>
 <label>피드백 (종목·중량·다음목표)</label><input name="feedback" placeholder="예: 스쿼트 자세교정 · 다음 데드리프트 60kg">
-<button class="btn sm" style="margin-top:12px">세션 추가 (완료 시 잔여 -1)</button>
+<label>숙제 (다음 시간까지)</label><input name="homework" placeholder="예: 홈트 스쿼트 3세트 · 단백질 챙기기 · 스트레칭 10분">
+<button class="btn sm" style="margin-top:12px">세션 저장</button>
+<p class="muted" style="margin-top:8px"><i>· 상태를 '완료'로 저장하면 잔여 -1, 그리고 회원에게 피드백·숙제 알림톡이 자동 발송됩니다.</i></p>
 </form></div>`;
 }
 function ptBody(list, D) {
