@@ -58,6 +58,7 @@ function layout({ title, owner, gym, active, body, flash, flashErr }) {
     ["/reports", "리포트", "reports"],
     ["/inbox", "상담·요청 접수", "inbox"],
     ["/settings", "매장 설정", "settings"],
+    ["/connect", "챗봇 연결", "connect"],
     ["/sends", "발송 관리", "sends"],
   ].map(([href, label, key]) => `<a href="${href}" class="${active === key ? "active" : ""}">${label}</a>`).join("");
   return `<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)} · 사장님 포털</title><style>${CSS}</style></head>
@@ -282,6 +283,46 @@ function sendsBody(s, logs) {
 <div class="panel"><h2>발송 이력</h2>
 <table><thead><tr><th>시각</th><th>종류</th><th>대상</th><th>내용</th><th>상태</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
+function connectBody(gym, bot, base) {
+  const cur = bot ? bot.kakao_bot_id : "";
+  const eps = [
+    ["웰컴(웰컴블록)", "welcome", "(웰컴 블록)"],
+    ["회원권조회", "membership", "내 회원권 조회"],
+    ["PT안내/현황", "pt", "PT 현황"],
+    ["출석체크", "checkin", "출석 체크"],
+    ["출석현황", "attendance", "출석 현황"],
+    ["재등록", "renew", "재등록"],
+    ["PT예약", "reserve", "PT 예약"],
+    ["가격/FAQ", "faq", "가격"],
+    ["강사소개", "trainer", "강사 소개"],
+    ["공지사항", "notice", "공지사항"],
+    ["이벤트", "event", "이벤트"],
+    ["시설안내", "facility", "시설"],
+    ["수업시간표", "gx", "수업시간표"],
+    ["대여", "rental", "대여"],
+    ["분실물", "lostfound", "분실물"],
+    ["주차", "parking", "주차"],
+    ["상담신청", "lead", "무료 상담 신청"],
+    ["신청접수(환불/정지/변경)", "request", "일시정지 신청"],
+    ["관리자(포털 안내)", "admin", "관리자"],
+  ];
+  const rows = eps.map(([n, p, u]) => `<tr><td>${esc(n)}</td><td><code>${esc(base)}/skill/${p}</code></td><td class="muted">${esc(u)}</td></tr>`).join("");
+  const status = cur
+    ? `<p style="margin-top:10px"><span class="badge b-green">연결됨</span> <code>${esc(cur)}</code></p>`
+    : `<p style="margin-top:10px"><span class="badge b-gold">미연결</span> — 연결 전에는 이 지점 데이터로 응답하지 않습니다.</p>`;
+  return `<h1>챗봇 연결</h1><div class="sub">내 카카오 오픈빌더 봇을 연결하면, 챗봇이 <b>이 지점 회원·설정으로만</b> 응답합니다 (지점별 데이터 격리)</div>
+<div class="panel"><h2>1. 봇 ID 연결</h2>
+<p class="muted">카카오 i 오픈빌더 → 내 봇으로 들어가면 주소창이 <code>chatbot.kakao.com/bot/<b>여기가_봇ID</b>/…</code> 형태입니다. 그 값을 붙여넣으세요.</p>
+<form method="POST" action="/connect">
+<label>카카오 봇 ID</label><input name="kakao_bot_id" value="${esc(cur)}" placeholder="예) 6a2ebca4e4f43f5dd57865cd" required>
+<button class="btn" style="margin-top:12px">${cur ? "연결 변경" : "연결하기"}</button></form>
+${status}</div>
+<div class="panel"><h2>2. 오픈빌더 스킬 URL 등록</h2>
+<p class="muted">오픈빌더에서 각 스킬(또는 새 스킬)의 URL을 아래 주소로 지정하고, 해당 블록의 대표발화에 예시를 넣으세요.</p>
+<table><thead><tr><th>기능</th><th>스킬 URL</th><th>발화 예시</th></tr></thead><tbody>${rows}</tbody></table>
+<p class="muted" style="margin-top:10px">※ 회원 조회·출석·PT·재등록은 최초 1회 전화번호로 본인 확인 후 자동 인식됩니다. 관리 기능(회원·매출)은 이 포털에서만 제공되어 챗봇엔 개인정보가 노출되지 않습니다.</p>
+</div>`;
+}
 function memberNewBody(D) {
   return `<h1>회원 직접 추가</h1><div class="sub"><a href="/members">← 회원 목록</a></div>
 <div class="panel"><form method="POST" action="/members/new">
@@ -290,4 +331,4 @@ function memberNewBody(D) {
 <button class="btn" style="margin-top:14px">추가</button></form></div>`;
 }
 
-module.exports = { esc, layout, loginPage, registerPage, dashboardBody, membersBody, memberDetailBody, memberNewBody, ptBody, reportsBody, inboxBody, settingsBody, sendsBody };
+module.exports = { esc, layout, loginPage, registerPage, dashboardBody, membersBody, memberDetailBody, memberNewBody, ptBody, reportsBody, inboxBody, settingsBody, connectBody, sendsBody };

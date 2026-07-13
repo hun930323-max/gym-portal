@@ -164,6 +164,18 @@ app.post("/settings", auth, (req, res) => {
   res.redirect("/settings");
 });
 
+// ── 챗봇 연결 (멀티테넌트 온보딩) ──
+const baseUrl = (req) => process.env.PORTAL_URL || ("https://" + req.get("host"));
+app.get("/connect", auth, (req, res) => {
+  const { f, e } = clearFlash(req);
+  page(req, res, "connect", "챗봇 연결", V.connectBody(req.gym, D.getBotByGym(req.gymId), baseUrl(req)), { flash: f, flashErr: e });
+});
+app.post("/connect", auth, (req, res) => {
+  const r = D.setBotForGym(req.gymId, req.body.kakao_bot_id);
+  if (r.error) flash(req, r.error, true); else flash(req, "챗봇이 연결되었습니다. 이제 이 지점 데이터로 응답합니다.");
+  res.redirect("/connect");
+});
+
 // ── 발송 관리 ──
 app.get("/sends", auth, (req, res) => page(req, res, "sends", "발송 관리", V.sendsBody(D.getSettings(req.gymId), D.sendLogs(req.gymId))));
 app.post("/sends/toggle", auth, (req, res) => {

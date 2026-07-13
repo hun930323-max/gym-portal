@@ -192,7 +192,19 @@ function metrics(gymId, days = 7) {
 }
 
 // ── 챗봇(스킬) 연동용 ──
-function gymByBot(botId) { const b = db.bots.find((x) => x.kakao_bot_id === botId); return b ? b.gym_id : (db.gyms[0] && db.gyms[0].id); }
+// 매핑된 봇만 해당 지점으로 라우팅 (미매핑 봇은 null → 타 지점 데이터 유출 방지)
+function gymByBot(botId) { const b = db.bots.find((x) => x.kakao_bot_id === botId); return b ? b.gym_id : null; }
+function getBotByGym(gymId) { return db.bots.find((x) => x.gym_id === gymId) || null; }
+function setBotForGym(gymId, kakaoBotId) {
+  kakaoBotId = String(kakaoBotId || "").trim();
+  if (!kakaoBotId) return { error: "봇 ID를 입력해 주세요." };
+  const other = db.bots.find((x) => x.kakao_bot_id === kakaoBotId && x.gym_id !== gymId);
+  if (other) return { error: "이미 다른 매장에 연결된 봇 ID입니다." };
+  let b = db.bots.find((x) => x.gym_id === gymId);
+  if (b) { b.kakao_bot_id = kakaoBotId; } else { b = { id: nextId(), gym_id: gymId, kakao_bot_id: kakaoBotId, name: "" }; db.bots.push(b); }
+  save();
+  return { bot: b };
+}
 function findMemberByPhone(gymId, phone) { phone = String(phone || "").replace(/\D/g, ""); return db.members.find((m) => m.gym_id === gymId && m.phone === phone); }
 function createLead(gymId, { name, phone, interest }) { const l = { id: nextId(), gym_id: gymId, name: name || "고객", phone: phone || "", interest: interest || "", status: "신규", created_at: todayPlus(0) }; db.leads.push(l); save(); return l; }
 function createRequest(gymId, { type, name, phone, detail, member_id }) { const r = { id: nextId(), gym_id: gymId, type, name: name || "고객", phone: phone || "", detail: detail || "", member_id: member_id || null, status: "접수", created_at: todayPlus(0) }; db.requests.push(r); save(); return r; }
@@ -221,7 +233,7 @@ function memberSessions(gymId, memberId) {
 
 module.exports = {
   load, save, reseed, todayPlus, ddayOf,
-  gymByBot, findMemberByPhone, createLead, createRequest, memberByBotUser, linkBotUser,
+  gymByBot, getBotByGym, setBotForGym, findMemberByPhone, createLead, createRequest, memberByBotUser, linkBotUser,
   checkinMember, attendanceDates, memberSessions,
   getOwnerByEmail, createOwnerWithGym, verifyOwner, getOwner, getGym,
   members, member, ptMembers, leads, requests, sendLogs, getSettings, setSettings,
