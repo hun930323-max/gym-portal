@@ -87,6 +87,19 @@ app.get("/members/sample.csv", auth, (req, res) => {
   res.set("Content-Type", "text/csv; charset=utf-8").set("Content-Disposition", "attachment; filename=members_sample.csv")
     .send("﻿전화번호,이름,회원권종류,만료일,가입일,PT총회,PT잔여,PT담당강사,락커여부,락커만료일,메모\n01012341234,김샘플,헬스 3개월,2026-12-31,2026-07-01,10,7,김코치,Y,2026-12-31,\n01098765432,이샘플,헬스 1개월,2026-08-31,2026-07-10,0,0,,N,,신규상담\n");
 });
+// 회원 CSV 내보내기 (업로드 양식과 호환 → 재업로드 가능) · :id 라우트보다 먼저 등록
+function csvCell(v) { v = v == null ? "" : String(v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; }
+function membersToCsv(list) {
+  const head = ["전화번호", "이름", "회원권종류", "만료일", "가입일", "PT총회", "PT잔여", "PT담당강사", "락커여부", "락커만료일", "메모"];
+  const rows = list.map((m) => [m.phone, m.name, m.membership_type, m.expire_date, m.join_date, m.pt_total, m.pt_remain, m.pt_trainer, m.locker ? "Y" : "N", m.locker_expire, m.memo].map(csvCell).join(","));
+  return "﻿" + [head.join(","), ...rows].join("\n");
+}
+app.get("/members/export.csv", auth, (req, res) => {
+  res.set("Content-Type", "text/csv; charset=utf-8").set("Content-Disposition", `attachment; filename=members_${D.todayPlus(0)}.csv`).send(membersToCsv(D.members(req.gymId)));
+});
+app.get("/data/export.json", auth, (req, res) => {
+  res.set("Content-Type", "application/json; charset=utf-8").set("Content-Disposition", `attachment; filename=backup_${D.todayPlus(0)}.json`).send(JSON.stringify(D.gymExport(req.gymId), null, 2));
+});
 app.get("/members/new", auth, (req, res) => page(req, res, "members", "회원 추가", V.memberNewBody(D)));
 app.post("/members/new", auth, (req, res) => {
   const b = req.body;
@@ -155,7 +168,7 @@ app.post("/inbox/lead/:id", auth, (req, res) => { D.setLeadStatus(req.gymId, Num
 app.post("/inbox/request/:id", auth, (req, res) => { D.setRequestStatus(req.gymId, Number(req.params.id), req.body.status); flash(req, "상태를 변경했습니다."); res.redirect("/inbox"); });
 
 // ── 매장 설정 ──
-app.get("/settings", auth, (req, res) => { const { f, e } = clearFlash(req); page(req, res, "settings", "매장 설정", V.settingsBody(D.getSettings(req.gymId)), { flash: f, flashErr: e }); });
+app.get("/settings", auth, (req, res) => { const { f, e } = clearFlash(req); page(req, res, "settings", "매장 설정", V.settingsBody(D.getSettings(req.gymId), D.lastBackupInfo()), { flash: f, flashErr: e }); });
 app.post("/settings", auth, (req, res) => {
   const b = req.body;
   D.setSettings(req.gymId, { gym_name: b.gym_name, price: b.price, trainers: b.trainers, notices: b.notices, events: b.events, facility: b.facility, gx_schedule: b.gx_schedule, rental: b.rental, lostfound: b.lostfound, parking: b.parking });
@@ -182,6 +195,16 @@ app.post("/sends/toggle", auth, (req, res) => {
   const s = D.getSettings(req.gymId);
   D.setSettings(req.gymId, { send_enabled: !s.send_enabled });
   res.redirect("/sends");
+});
+
+// ── 에러 로깅 + 안전 폴백 (모든 라우트 뒤) ──
+app.use((err, req, res, next) => {
+  console.error("[ERROR]", new Date().toISOString(), req.method, req.originalUrl, "-", (err && err.message) || err);
+  if (res.headersSent) return next(err);
+  if (req.path.startsWith("/skill/")) {
+    return res.json({ version: "2.0", template: { outputs: [{ simpleText: { text: "일시적으로 응답이 지연되고 있어요. 잠시 후 다시 시도해 주세요." } }] } });
+  }
+  res.status(500).send("<div style='font-family:sans-serif;text-align:center;padding:60px'><h1>일시적인 오류가 발생했습니다</h1><p>잠시 후 다시 시도해 주세요.</p><a href='/dashboard'>← 대시보드</a></div>");
 });
 
 const PORT = process.env.PORT || 4000;

@@ -22,7 +22,41 @@ function blank() {
   };
 }
 function nextId() { return db._seq++; }
-function save() { fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2)); }
+function save() { fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2)); backupIfDue(); }
+
+// 자동 백업: 하루 1회 날짜별 스냅샷, 최근 14개만 보관
+let lastBackupDay = null;
+function backupIfDue() {
+  try {
+    const day = todayPlus(0);
+    if (lastBackupDay === day) return;
+    const dir = path.join(DATA_DIR, "backups");
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    const f = path.join(dir, `db-${day}.json`);
+    if (!fs.existsSync(f) && fs.existsSync(DB_FILE)) fs.copyFileSync(DB_FILE, f);
+    lastBackupDay = day;
+    const files = fs.readdirSync(dir).filter((n) => /^db-.*\.json$/.test(n)).sort();
+    while (files.length > 14) { try { fs.unlinkSync(path.join(dir, files.shift())); } catch (e) {} }
+  } catch (e) { console.error("[backup]", e.message); }
+}
+function lastBackupInfo() {
+  try {
+    const dir = path.join(DATA_DIR, "backups");
+    if (!fs.existsSync(dir)) return { count: 0, latest: null };
+    const files = fs.readdirSync(dir).filter((n) => /^db-.*\.json$/.test(n)).sort();
+    return { count: files.length, latest: files.length ? files[files.length - 1].replace(/^db-|\.json$/g, "") : null };
+  } catch (e) { return { count: 0, latest: null }; }
+}
+
+// 지점 데이터 전체 내보내기 (백업/이전용)
+function gymExport(gymId) {
+  const by = (t) => (db[t] || []).filter((r) => r.gym_id === gymId);
+  return {
+    exported_at: new Date().toISOString(), gym: getGym(gymId), settings: db.settings[gymId] || {},
+    members: by("members"), pt_sessions: by("pt_sessions"), attendance: by("attendance"),
+    payments: by("payments"), leads: by("leads"), requests: by("requests"), bot_users: by("bot_users"),
+  };
+}
 
 function load() {
   if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -232,7 +266,7 @@ function memberSessions(gymId, memberId) {
 }
 
 module.exports = {
-  load, save, reseed, todayPlus, ddayOf,
+  load, save, reseed, todayPlus, ddayOf, lastBackupInfo, gymExport,
   gymByBot, getBotByGym, setBotForGym, findMemberByPhone, createLead, createRequest, memberByBotUser, linkBotUser,
   checkinMember, attendanceDates, memberSessions,
   getOwnerByEmail, createOwnerWithGym, verifyOwner, getOwner, getGym,

@@ -248,7 +248,7 @@ function inboxBody(leads, requests) {
 <div class="panel"><h2>🗂️ 각종 요청 (정지·환불·대여·분실물·주차 등)</h2>
 <table><thead><tr><th>접수</th><th>유형</th><th>회원</th><th>내용</th><th>상태</th><th>처리</th></tr></thead><tbody>${rRows}</tbody></table></div>`;
 }
-function settingsBody(s) {
+function settingsBody(s, backup) {
   return `<h1>매장 설정</h1><div class="sub">여기서 바꾼 내용이 챗봇 응답에 그대로 반영됩니다</div>
 <form method="POST" action="/settings"><div class="panel"><h2>기본 정보</h2>
 <label>매장명</label><input name="gym_name" value="${esc(s.gym_name || "")}">
@@ -263,7 +263,13 @@ function settingsBody(s) {
 <label>대여 안내</label><textarea name="rental" rows="2">${esc(s.rental || "")}</textarea>
 <label>분실물 안내</label><textarea name="lostfound" rows="2">${esc(s.lostfound || "")}</textarea>
 <label>주차 안내</label><textarea name="parking" rows="2">${esc(s.parking || "")}</textarea>
-<button class="btn" style="margin-top:16px">저장</button></div></form>`;
+<button class="btn" style="margin-top:16px">저장</button></div></form>
+<div class="panel"><h2>데이터 관리 · 백업</h2>
+<p class="muted" style="margin-bottom:12px">회원 데이터는 안전하게 지키세요. 정기적으로 내려받아 보관하시길 권장합니다.${backup && backup.count ? ` (자동 백업 ${backup.count}개 보관 중${backup.latest ? `, 최근 ${esc(backup.latest)}` : ""})` : ""}</p>
+<a class="btn gray" href="/members/export.csv">📥 회원 CSV 내려받기</a>
+<a class="btn gray" href="/data/export.json" style="margin-left:8px">🗄 전체 백업(JSON) 내려받기</a>
+<p class="muted" style="margin-top:10px">· CSV는 회원 관리의 업로드 양식과 동일해, 그대로 다시 올릴 수 있습니다.<br>· 서버는 매일 자동으로 백업 스냅샷을 만들어 최근 14개를 보관합니다.</p>
+</div>`;
 }
 function sendsBody(s, logs) {
   const on = !!s.send_enabled;
