@@ -292,13 +292,19 @@ ${adminGymBar(admin)}
 <p class="muted" style="margin-bottom:12px">현재 상태: ${on ? `<span class="badge b-green">실발송 ON</span>` : `<span class="badge b-gold">dry-run (로그만)</span>`} — 실발송은 카카오 채널 연결 + 알림톡 템플릿 승인 후 켜세요.</p>
 <form method="POST" action="/sends/toggle"><button class="btn ${on ? "gray" : "dark"}">${on ? "dry-run으로 끄기" : "실발송 켜기"}</button></form>
 </div>
-<div class="panel"><h2>자동 발송 항목</h2>
-<table><tbody>
-<tr><th>재등록 리마인드</th><td>만료 D-7 / D-3 / D-day 알림톡</td></tr>
-<tr><th>휴면 회원</th><td>2주+ 미방문 친구톡 (동의 회원)</td></tr>
-<tr><th>PT 소진 임박</th><td>잔여 ≤ 2회 재등록 안내</td></tr>
-<tr><th>사장님 리포트</th><td>매주 월요일 주간 리포트</td></tr>
-</tbody></table></div>
+${(() => {
+  const autoRow = (name, desc, type, val) => { const onx = val !== false; return `<tr><th>${esc(name)}</th><td>${esc(desc)}</td><td>${onx ? `<span class="badge b-green">ON</span>` : `<span class="badge b-gray">OFF</span>`}</td><td><form method="POST" action="/sends/auto/${type}" style="margin:0"><button class="btn sm ${onx ? "gray" : "dark"}">${onx ? "끄기" : "켜기"}</button></form></td></tr>`; };
+  return `<div class="panel"><h2>자동 발송 항목</h2>
+<p class="muted" style="margin-bottom:10px">매일 자동 스캔해 조건에 맞는 회원에게 발송합니다.${s.autosend_last ? ` · 최근 실행 ${esc(s.autosend_last)}` : ""}</p>
+<table><thead><tr><th>항목</th><th>대상</th><th>상태</th><th>전환</th></tr></thead><tbody>
+${autoRow("재등록 리마인드", "회원권 만료 D-7 / D-3 / 당일", "renew", s.auto_renew)}
+${autoRow("휴면 케어", "최근 2주+ 미방문 회원", "dormant", s.auto_dormant)}
+${autoRow("PT 소진 임박", "PT 잔여 ≤ 2회 회원", "ptlow", s.auto_ptlow)}
+</tbody></table>
+<form method="POST" action="/sends/run" style="margin-top:14px"><button class="btn dark">▶ 지금 자동 발송 실행</button></form>
+<p class="muted" style="margin-top:8px">· 같은 대상에게 중복 발송되지 않습니다. · 매일 자동 실행은 크론(유료 전환 후 Render Cron) 또는 외부 스케줄러가 <code>/cron/autosends?key=CRON_SECRET</code>를 호출하도록 설정하세요.</p>
+</div>`;
+})()}
 <div class="panel"><h2>발송 이력</h2>
 <table><thead><tr><th>시각</th><th>종류</th><th>대상</th><th>내용</th><th>상태</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }

@@ -226,6 +226,26 @@ app.post("/sends/toggle", auth, adminOnly, (req, res) => {
   D.setSettings(gid, { send_enabled: !s.send_enabled });
   res.redirect("/sends");
 });
+// 자동 발송 항목 ON/OFF (renew·dormant·ptlow)
+app.post("/sends/auto/:type", auth, adminOnly, (req, res) => {
+  const gid = adminGid(req); const t = req.params.type;
+  if (["renew", "dormant", "ptlow"].includes(t)) { const key = "auto_" + t; const s = D.getSettings(gid); D.setSettings(gid, { [key]: s[key] === false }); }
+  res.redirect("/sends");
+});
+// 지금 자동 발송 실행 (운영자 수동 트리거)
+app.post("/sends/run", auth, adminOnly, (req, res) => {
+  const gid = adminGid(req);
+  const r = D.runAutoSends(gid);
+  flash(req, `자동 발송 실행 완료 — 재등록 ${r.renew} · 휴면 ${r.dormant} · PT소진 ${r.ptlow}건 발송 (중복 제외 ${r.skipped})`);
+  res.redirect("/sends");
+});
+// 자동 발송 크론 (외부 스케줄러가 매일 1회 호출) — CRON_SECRET 필요
+app.get("/cron/autosends", (req, res) => {
+  const secret = process.env.CRON_SECRET;
+  if (!secret || req.query.key !== secret) return res.status(403).json({ error: "forbidden" });
+  const gyms = D.allGyms().map((g) => ({ gym_id: g.id, ...D.runAutoSends(g.id) }));
+  res.json({ ran_at: new Date().toISOString(), gyms });
+});
 
 // ── 에러 로깅 + 안전 폴백 (모든 라우트 뒤) ──
 app.use((err, req, res, next) => {

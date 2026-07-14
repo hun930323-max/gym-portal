@@ -223,11 +223,13 @@ function sendAlimtalk({ phone, message, variables }) {
 }
 
 // 회원에게 알림 발송 + 이력 기록 (send_enabled + 대행사 설정 시 실발송, 아니면 dry-run)
-function notifyMember(gymId, { member_id, phone, name, kind, message, variables }) {
+// dedup 키가 있고 이미 같은 키로 보낸 이력이 있으면 건너뜀(중복 방지)
+function notifyMember(gymId, { member_id, phone, name, kind, message, variables, dedup }) {
+  if (dedup && db.send_logs.some((l) => l.gym_id === gymId && l.dedup_key === dedup)) return { status: "skip", skipped: true };
   const s = getSettings(gymId);
   const provider = !!(process.env.SOLAPI_API_KEY && process.env.SOLAPI_PFID && process.env.SOLAPI_TEMPLATE_ID);
   const willSend = !!s.send_enabled && provider;
-  const log = addSendLog(gymId, { kind: kind || "PT피드백", target: phone, member_id: member_id || null, message, status: willSend ? "sent" : "dry-run" });
+  const log = addSendLog(gymId, { kind: kind || "PT피드백", target: phone, member_id: member_id || null, message, status: willSend ? "sent" : "dry-run", dedup_key: dedup || null });
   if (willSend) {
     sendAlimtalk({ phone, message, variables }).then((r) => {
       if (r && r.error) { log.status = "error"; log.error = r.error; save(); }
@@ -235,6 +237,56 @@ function notifyMember(gymId, { member_id, phone, name, kind, message, variables 
     }).catch(() => {});
   }
   return { status: log.status, log };
+}
+
+// 자동 발송 스캔: 재등록 D-7/D-3/D-day · 휴면 2주+ · PT 잔여 ≤2 대상 선별 후 발송(중복 방지)
+function runAutoSends(gymId) {
+  const s = getSettings(gymId);
+  const gymName = s.gym_name || (getGym(gymId) || {}).name || "";
+  const today = todayPlus(0);
+  const ms = members(gymId);
+  const out = { renew: 0, dormant: 0, ptlow: 0, skipped: 0 };
+  const trySend = (m, kind, message, dedup) => { const r = notifyMember(gymId, { member_id: m.id, phone: m.phone, name: m.name, kind, message, dedup }); if (r.skipped) { out.skipped++; return false; } return true; };
+  // 1) 재등록 리마인드 (D-7/D-3/D-day)
+  if (s.auto_renew !== false) {
+    for (const m of ms) {
+      if (!m.phone || !m.expire_date) continue;
+      const d = dayIdx(m.expire_date) - dayIdx(today); // 정확한 잔여 일수 (D-day)
+      if (d === 7 || d === 3 || d === 0) {
+        const msg = `[${gymName}] 회원권 만료 안내\n${m.name}님, 회원권이 ${m.expire_date}에 만료돼요${d > 0 ? ` (D-${d})` : " (오늘 만료)"}.\n공백 없이 이어가시려면 재등록해 주세요! 💪`;
+        if (trySend(m, "재등록리마인드", msg, `renew:${m.id}:${m.expire_date}:D${d}`)) out.renew++;
+      }
+    }
+  }
+  // 2) 휴면 케어 (최근 방문 14일+ 경과, 7일 주기 1회)
+  if (s.auto_dormant !== false) {
+    const att = byGym("attendance", gymId);
+    const last = {};
+    att.forEach((a) => { if (!last[a.member_id] || a.date > last[a.member_id]) last[a.member_id] = a.date; });
+    const week = Math.floor(dayIdx(today) / 7);
+    for (const m of ms) {
+      if (!m.phone) continue;
+      const lv = last[m.id];
+      const gap = lv ? dayIdx(today) - dayIdx(lv) : 999;
+      if (gap >= 14) {
+        const msg = `[${gymName}] ${m.name}님, 요즘 뜸하시네요! 🏋️\n2주 넘게 안 오셨어요. 오늘 가볍게 몸 풀러 오시는 건 어때요? 기다릴게요!`;
+        if (trySend(m, "휴면케어", msg, `dormant:${m.id}:${week}`)) out.dormant++;
+      }
+    }
+  }
+  // 3) PT 소진 임박 (잔여 ≤ 2)
+  if (s.auto_ptlow !== false) {
+    for (const m of ms) {
+      if (!m.phone) continue;
+      if ((m.pt_total || 0) > 0 && (m.pt_remain || 0) <= 2) {
+        const msg = `[${gymName}] ${m.name}님, PT 잔여 ${m.pt_remain}회 남았어요!\n곧 소진돼요. 재등록하면 끊김 없이 이어집니다. 💪`;
+        if (trySend(m, "PT소진임박", msg, `ptlow:${m.id}:${m.pt_remain}`)) out.ptlow++;
+      }
+    }
+  }
+  setSettings(gymId, { autosend_last: new Date().toISOString().slice(0, 16).replace("T", " ") });
+  out.total = out.renew + out.dormant + out.ptlow;
+  return out;
 }
 
 // ── 집계(대시보드/리포트) ──
@@ -313,5 +365,5 @@ module.exports = {
   getOwnerByEmail, createOwnerWithGym, verifyOwner, getOwner, getGym, allGyms,
   members, member, ptMembers, leads, requests, sendLogs, getSettings, setSettings,
   upsertMember, updateMember, deleteMember, addPtSession, ptSessions,
-  setLeadStatus, setRequestStatus, addSendLog, notifyMember, metrics,
+  setLeadStatus, setRequestStatus, addSendLog, notifyMember, runAutoSends, metrics,
 };
