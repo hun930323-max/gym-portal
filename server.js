@@ -22,7 +22,19 @@ function auth(req, res, next) {
   req.owner = owner;
   req.gym = D.getGym(owner.gym_id);
   req.gymId = owner.gym_id;
+  req.isAdmin = !!owner.is_admin;
   next();
+}
+// 운영자(우리) 전용 라우트 가드 — 사장님 접근 차단
+function adminOnly(req, res, next) {
+  if (!req.isAdmin) { flash(req, "운영자 전용 메뉴입니다. 접근 권한이 없습니다.", true); return res.redirect("/dashboard"); }
+  next();
+}
+// 운영자는 지점을 선택해 관리 (?gym=<id>), 세션에 유지. 사장님은 항상 본인 지점.
+function adminGid(req) {
+  if (!req.isAdmin) return req.gymId;
+  if (req.query.gym) { const g = Number(req.query.gym); if (D.getGym(g)) req.session.targetGymId = g; }
+  return req.session.targetGymId && D.getGym(req.session.targetGymId) ? req.session.targetGymId : req.gymId;
 }
 const page = (req, res, active, title, body, extra = {}) =>
   res.send(V.layout({ title, owner: req.owner, gym: req.gym, active, body, flash: req.session.flash, flashErr: req.session.flashErr, ...extra }));
@@ -113,7 +125,7 @@ app.get("/members", auth, (req, res) => {
   if (q) list = list.filter((m) => (m.name || "").includes(q) || (m.phone || "").includes(q.replace(/\D/g, "")));
   list = list.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
   const { f, e } = clearFlash(req);
-  page(req, res, "members", "회원 관리", V.membersBody(list, D, q), { flash: f, flashErr: e });
+  page(req, res, "members", "회원 관리", V.membersBody(list, D, q, D.lastBackupInfo()), { flash: f, flashErr: e });
 });
 app.post("/members/upload", auth, upload.single("csv"), (req, res) => {
   if (!req.file) { flash(req, "파일이 없습니다.", true); return res.redirect("/members"); }
@@ -183,33 +195,35 @@ app.get("/inbox", auth, (req, res) => {
 app.post("/inbox/lead/:id", auth, (req, res) => { D.setLeadStatus(req.gymId, Number(req.params.id), req.body.status); flash(req, "상태를 변경했습니다."); res.redirect("/inbox"); });
 app.post("/inbox/request/:id", auth, (req, res) => { D.setRequestStatus(req.gymId, Number(req.params.id), req.body.status); flash(req, "상태를 변경했습니다."); res.redirect("/inbox"); });
 
-// ── 매장 설정 ──
-app.get("/settings", auth, (req, res) => { const { f, e } = clearFlash(req); page(req, res, "settings", "매장 설정", V.settingsBody(D.getSettings(req.gymId), D.lastBackupInfo()), { flash: f, flashErr: e }); });
-app.post("/settings", auth, (req, res) => {
-  const b = req.body;
-  D.setSettings(req.gymId, { gym_name: b.gym_name, price: b.price, trainers: b.trainers, notices: b.notices, events: b.events, facility: b.facility, gx_schedule: b.gx_schedule, rental: b.rental, lostfound: b.lostfound, parking: b.parking });
-  if (b.gym_name && req.gym) { req.gym.name = b.gym_name; D.save(); }
+// ── 매장 설정 (운영자 전용) ──
+app.get("/settings", auth, adminOnly, (req, res) => { const { f, e } = clearFlash(req); const gid = adminGid(req); page(req, res, "settings", "매장 설정", V.settingsBody(D.getSettings(gid), { gyms: D.allGyms(), gid }), { flash: f, flashErr: e }); });
+app.post("/settings", auth, adminOnly, (req, res) => {
+  const gid = adminGid(req); const b = req.body;
+  D.setSettings(gid, { gym_name: b.gym_name, price: b.price, trainers: b.trainers, notices: b.notices, events: b.events, facility: b.facility, gx_schedule: b.gx_schedule, rental: b.rental, lostfound: b.lostfound, parking: b.parking });
+  if (b.gym_name) { const g = D.getGym(gid); if (g) { g.name = b.gym_name; D.save(); } }
   flash(req, "매장 설정이 저장되었습니다. (챗봇에 반영)");
   res.redirect("/settings");
 });
 
-// ── 챗봇 연결 (멀티테넌트 온보딩) ──
+// ── 챗봇 연결 (운영자 전용 · 멀티테넌트 온보딩) ──
 const baseUrl = (req) => process.env.PORTAL_URL || ("https://" + req.get("host"));
-app.get("/connect", auth, (req, res) => {
-  const { f, e } = clearFlash(req);
-  page(req, res, "connect", "챗봇 연결", V.connectBody(req.gym, D.getBotByGym(req.gymId), baseUrl(req)), { flash: f, flashErr: e });
+app.get("/connect", auth, adminOnly, (req, res) => {
+  const { f, e } = clearFlash(req); const gid = adminGid(req);
+  page(req, res, "connect", "챗봇 연결", V.connectBody(D.getGym(gid), D.getBotByGym(gid), baseUrl(req), { gyms: D.allGyms(), gid }), { flash: f, flashErr: e });
 });
-app.post("/connect", auth, (req, res) => {
-  const r = D.setBotForGym(req.gymId, req.body.kakao_bot_id);
+app.post("/connect", auth, adminOnly, (req, res) => {
+  const gid = adminGid(req);
+  const r = D.setBotForGym(gid, req.body.kakao_bot_id);
   if (r.error) flash(req, r.error, true); else flash(req, "챗봇이 연결되었습니다. 이제 이 지점 데이터로 응답합니다.");
   res.redirect("/connect");
 });
 
-// ── 발송 관리 ──
-app.get("/sends", auth, (req, res) => page(req, res, "sends", "발송 관리", V.sendsBody(D.getSettings(req.gymId), D.sendLogs(req.gymId))));
-app.post("/sends/toggle", auth, (req, res) => {
-  const s = D.getSettings(req.gymId);
-  D.setSettings(req.gymId, { send_enabled: !s.send_enabled });
+// ── 발송 관리 (운영자 전용) ──
+app.get("/sends", auth, adminOnly, (req, res) => { const gid = adminGid(req); page(req, res, "sends", "발송 관리", V.sendsBody(D.getSettings(gid), D.sendLogs(gid), { gyms: D.allGyms(), gid })); });
+app.post("/sends/toggle", auth, adminOnly, (req, res) => {
+  const gid = adminGid(req);
+  const s = D.getSettings(gid);
+  D.setSettings(gid, { send_enabled: !s.send_enabled });
   res.redirect("/sends");
 });
 

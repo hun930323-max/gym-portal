@@ -77,7 +77,12 @@ function seed() {
   db.gyms.push({ id: gymId, name: "○○피트니스", phone: "02-000-0000", address: "서울 강남구 ○○로 123", created_at: todayPlus(0) });
   db.owners.push({
     id: nextId(), gym_id: gymId, email: "demo@demo.com",
-    password_hash: bcrypt.hashSync("demo1234", 8), name: "데모 사장님", created_at: todayPlus(0),
+    password_hash: bcrypt.hashSync("demo1234", 8), name: "데모 사장님", is_admin: false, created_at: todayPlus(0),
+  });
+  // 운영자(우리) 전용 계정 — 매장설정·챗봇연결·발송관리 관리 권한
+  db.owners.push({
+    id: nextId(), gym_id: gymId, email: "admin@gym-portal.com",
+    password_hash: bcrypt.hashSync("admin1234", 8), name: "운영자", is_admin: true, created_at: todayPlus(0),
   });
   db.settings[gymId] = {
     gym_name: "○○피트니스",
@@ -131,7 +136,7 @@ function createOwnerWithGym({ email, password, name, gymName }) {
   if (getOwnerByEmail(email)) return { error: "이미 가입된 이메일입니다." };
   const gymId = nextId();
   db.gyms.push({ id: gymId, name: gymName, phone: "", address: "", created_at: todayPlus(0) });
-  const owner = { id: nextId(), gym_id: gymId, email, password_hash: bcrypt.hashSync(password, 8), name, created_at: todayPlus(0) };
+  const owner = { id: nextId(), gym_id: gymId, email, password_hash: bcrypt.hashSync(password, 8), name, is_admin: false, created_at: todayPlus(0) };
   db.owners.push(owner);
   db.settings[gymId] = { gym_name: gymName, price: "", trainers: "", notices: "", events: "", facility: "", gx_schedule: "", rental: "", lostfound: "", parking: "", send_enabled: false };
   save();
@@ -144,6 +149,7 @@ function verifyOwner(email, password) {
 }
 function getOwner(id) { return db.owners.find((o) => o.id === id); }
 function getGym(id) { return db.gyms.find((g) => g.id === id); }
+function allGyms() { return db.gyms.slice(); } // 운영자 지점 선택용
 
 // ── 테넌트 조회 ──
 const byGym = (table, gymId) => db[table].filter((r) => r.gym_id === gymId);
@@ -304,7 +310,7 @@ module.exports = {
   load, save, reseed, todayPlus, ddayOf, lastBackupInfo, gymExport,
   gymByBot, getBotByGym, setBotForGym, findMemberByPhone, createLead, createRequest, memberByBotUser, linkBotUser,
   checkinMember, attendanceDates, memberSessions,
-  getOwnerByEmail, createOwnerWithGym, verifyOwner, getOwner, getGym,
+  getOwnerByEmail, createOwnerWithGym, verifyOwner, getOwner, getGym, allGyms,
   members, member, ptMembers, leads, requests, sendLogs, getSettings, setSettings,
   upsertMember, updateMember, deleteMember, addPtSession, ptSessions,
   setLeadStatus, setRequestStatus, addSendLog, notifyMember, metrics,

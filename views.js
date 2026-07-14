@@ -51,16 +51,21 @@ label{display:block;font-size:12px;color:#6B7280;margin:12px 0 5px;font-weight:6
 `;
 
 function layout({ title, owner, gym, active, body, flash, flashErr }) {
-  const nav = [
+  const baseNav = [
     ["/dashboard", "대시보드", "dashboard"],
     ["/members", "회원 관리", "members"],
     ["/pt", "PT 회원", "pt"],
     ["/reports", "리포트", "reports"],
     ["/inbox", "상담·요청 접수", "inbox"],
+  ];
+  const adminNav = [
     ["/settings", "매장 설정", "settings"],
     ["/connect", "챗봇 연결", "connect"],
     ["/sends", "발송 관리", "sends"],
-  ].map(([href, label, key]) => `<a href="${href}" class="${active === key ? "active" : ""}">${label}</a>`).join("");
+  ];
+  const items = (owner && owner.is_admin) ? baseNav.concat(adminNav) : baseNav;
+  const nav = items.map(([href, label, key]) => `<a href="${href}" class="${active === key ? "active" : ""}">${label}</a>`).join("")
+    + ((owner && owner.is_admin) ? `<div style="margin:8px 16px 0;font-size:11px;color:#7c8a99">운영자 전용 ▲</div>` : "");
   return `<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)} · 사장님 포털</title><style>${CSS}</style></head>
 <body><div class="layout">
 <nav class="side">
@@ -144,9 +149,14 @@ function memberRow(m, D) {
 <td>${esc(m.expire_date || "-")} ${exp}</td><td>${pt}</td><td>${m.locker ? "이용" : "-"}</td>
 <td><a class="btn sm gray" href="/members/${m.id}">상세</a></td></tr>`;
 }
-function membersBody(list, D, q) {
+function membersBody(list, D, q, backup) {
   const rows = list.map((m) => memberRow(m, D)).join("") || `<tr><td colspan="7" class="muted">회원이 없습니다. CSV를 업로드하거나 직접 추가하세요.</td></tr>`;
   return `<h1>회원 관리</h1><div class="sub">총 ${list.length}명 · CSV 업로드로 한 번에 등록</div>
+<div class="panel"><h2>💾 데이터 내보내기 · 백업</h2>
+<p class="muted" style="margin-bottom:12px">내 회원 데이터를 안전하게 지키세요. 정기적으로 내려받아 보관하시길 권장합니다.${backup && backup.count ? ` (서버 자동 백업 ${backup.count}개 보관${backup.latest ? `, 최근 ${esc(backup.latest)}` : ""})` : ""}</p>
+<a class="btn gray" href="/members/export.csv">📥 회원 CSV 내려받기</a>
+<a class="btn gray" href="/data/export.json" style="margin-left:8px">🗄 전체 백업(JSON) 내려받기</a>
+<p class="muted" style="margin-top:10px">· CSV는 아래 업로드 양식과 동일해 그대로 다시 올릴 수 있어요. · 서버는 매일 자동 백업(최근 14개)을 보관합니다.</p></div>
 <div class="panel"><h2>📤 회원 CSV 업로드</h2>
 <form method="POST" action="/members/upload" enctype="multipart/form-data">
 <div class="up">CSV 파일 선택 (헤더: 전화번호,이름,회원권종류,만료일,가입일,PT총회,PT잔여,PT담당강사,락커여부,락커만료일,메모)
@@ -250,8 +260,14 @@ function inboxBody(leads, requests) {
 <div class="panel"><h2>🗂️ 각종 요청 (정지·환불·대여·분실물·주차 등)</h2>
 <table><thead><tr><th>접수</th><th>유형</th><th>회원</th><th>내용</th><th>상태</th><th>처리</th></tr></thead><tbody>${rRows}</tbody></table></div>`;
 }
-function settingsBody(s, backup) {
-  return `<h1>매장 설정</h1><div class="sub">여기서 바꾼 내용이 챗봇 응답에 그대로 반영됩니다</div>
+function adminGymBar(admin) {
+  if (!admin || !admin.gyms || !admin.gyms.length) return "";
+  const opts = admin.gyms.map((g) => `<option value="${g.id}" ${g.id === admin.gid ? "selected" : ""}>${esc(g.name)}</option>`).join("");
+  return `<div class="panel" style="background:#26313f;color:#fff"><form method="GET" style="display:flex;align-items:center;gap:10px;margin:0;flex-wrap:wrap"><span style="font-size:14px;font-weight:700">🛠 운영자 · 관리 지점</span><select name="gym" onchange="this.form.submit()" style="max-width:300px">${opts}</select><span style="font-size:13px;color:#9fb0c0">선택한 지점의 설정을 관리합니다</span></form></div>`;
+}
+function settingsBody(s, admin) {
+  return `<h1>매장 설정</h1><div class="sub">운영자 전용 · 여기서 바꾼 내용이 챗봇 응답에 그대로 반영됩니다</div>
+${adminGymBar(admin)}
 <form method="POST" action="/settings"><div class="panel"><h2>기본 정보</h2>
 <label>매장명</label><input name="gym_name" value="${esc(s.gym_name || "")}">
 <label>가격 안내</label><textarea name="price" rows="2">${esc(s.price || "")}</textarea>
@@ -265,18 +281,13 @@ function settingsBody(s, backup) {
 <label>대여 안내</label><textarea name="rental" rows="2">${esc(s.rental || "")}</textarea>
 <label>분실물 안내</label><textarea name="lostfound" rows="2">${esc(s.lostfound || "")}</textarea>
 <label>주차 안내</label><textarea name="parking" rows="2">${esc(s.parking || "")}</textarea>
-<button class="btn" style="margin-top:16px">저장</button></div></form>
-<div class="panel"><h2>데이터 관리 · 백업</h2>
-<p class="muted" style="margin-bottom:12px">회원 데이터는 안전하게 지키세요. 정기적으로 내려받아 보관하시길 권장합니다.${backup && backup.count ? ` (자동 백업 ${backup.count}개 보관 중${backup.latest ? `, 최근 ${esc(backup.latest)}` : ""})` : ""}</p>
-<a class="btn gray" href="/members/export.csv">📥 회원 CSV 내려받기</a>
-<a class="btn gray" href="/data/export.json" style="margin-left:8px">🗄 전체 백업(JSON) 내려받기</a>
-<p class="muted" style="margin-top:10px">· CSV는 회원 관리의 업로드 양식과 동일해, 그대로 다시 올릴 수 있습니다.<br>· 서버는 매일 자동으로 백업 스냅샷을 만들어 최근 14개를 보관합니다.</p>
-</div>`;
+<button class="btn" style="margin-top:16px">저장</button></div></form>`;
 }
-function sendsBody(s, logs) {
+function sendsBody(s, logs, admin) {
   const on = !!s.send_enabled;
   const rows = logs.slice(0, 30).map((l) => `<tr><td>${esc(l.sent_at)}</td><td><span class="badge b-gray">${esc(l.kind)}</span></td><td>${esc(maskPhone(l.target))}</td><td>${esc(l.message)}</td><td>${l.status === "sent" ? `<span class="badge b-green">발송</span>` : `<span class="badge b-gold">dry-run</span>`}</td></tr>`).join("") || `<tr><td colspan="5" class="muted">발송 이력이 없습니다.</td></tr>`;
-  return `<h1>발송 관리</h1><div class="sub">자동 발송 대상·스위치·이력</div>
+  return `<h1>발송 관리</h1><div class="sub">운영자 전용 · 자동 발송 대상·스위치·이력</div>
+${adminGymBar(admin)}
 <div class="panel"><h2>발송 스위치</h2>
 <p class="muted" style="margin-bottom:12px">현재 상태: ${on ? `<span class="badge b-green">실발송 ON</span>` : `<span class="badge b-gold">dry-run (로그만)</span>`} — 실발송은 카카오 채널 연결 + 알림톡 템플릿 승인 후 켜세요.</p>
 <form method="POST" action="/sends/toggle"><button class="btn ${on ? "gray" : "dark"}">${on ? "dry-run으로 끄기" : "실발송 켜기"}</button></form>
@@ -291,7 +302,7 @@ function sendsBody(s, logs) {
 <div class="panel"><h2>발송 이력</h2>
 <table><thead><tr><th>시각</th><th>종류</th><th>대상</th><th>내용</th><th>상태</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
-function connectBody(gym, bot, base) {
+function connectBody(gym, bot, base, admin) {
   const cur = bot ? bot.kakao_bot_id : "";
   const eps = [
     ["웰컴(웰컴블록)", "welcome", "(웰컴 블록)"],
@@ -318,7 +329,8 @@ function connectBody(gym, bot, base) {
   const status = cur
     ? `<p style="margin-top:10px"><span class="badge b-green">연결됨</span> <code>${esc(cur)}</code></p>`
     : `<p style="margin-top:10px"><span class="badge b-gold">미연결</span> — 연결 전에는 이 지점 데이터로 응답하지 않습니다.</p>`;
-  return `<h1>챗봇 연결</h1><div class="sub">내 카카오 오픈빌더 봇을 연결하면, 챗봇이 <b>이 지점 회원·설정으로만</b> 응답합니다 (지점별 데이터 격리)</div>
+  return `<h1>챗봇 연결</h1><div class="sub">운영자 전용 · 카카오 오픈빌더 봇을 연결하면 챗봇이 <b>이 지점 회원·설정으로만</b> 응답합니다 (지점별 데이터 격리)</div>
+${adminGymBar(admin)}
 <div class="panel"><h2>1. 봇 ID 연결</h2>
 <p class="muted">카카오 i 오픈빌더 → 내 봇으로 들어가면 주소창이 <code>chatbot.kakao.com/bot/<b>여기가_봇ID</b>/…</code> 형태입니다. 그 값을 붙여넣으세요.</p>
 <form method="POST" action="/connect">
