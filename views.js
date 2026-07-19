@@ -94,6 +94,7 @@ ${msg ? `<div class="flash">${esc(msg)}</div>` : ""}${err ? `<div class="flash e
 </form>
 <div class="muted" style="margin-top:16px;text-align:center">계정이 없으신가요? <a href="/register" style="color:#B26B00;font-weight:700">지점 등록</a></div>
 <div class="muted" style="margin-top:10px;text-align:center">데모 계정: demo@demo.com / demo1234</div>
+<div class="muted" style="margin-top:10px;text-align:center"><a href="/privacy" style="color:#888">개인정보 처리방침</a></div>
 </div></body></html>`;
 }
 function registerPage(err) {
@@ -193,6 +194,8 @@ function memberDetailBody(m, sessions, D) {
 <div><label>가입일</label><input name="join_date" value="${esc(m.join_date || "")}"></div>
 <div><label>메모</label><input name="memo" value="${esc(m.memo || "")}"></div>
 </div>
+<label style="display:flex;align-items:center;gap:8px;margin-top:12px;font-weight:400"><input type="checkbox" name="marketing_consent" value="Y" style="width:auto" ${m.marketing_consent ? "checked" : ""}> 마케팅 정보 수신 동의 (광고성 알림톡)</label>
+${m.unsubscribed ? `<div style="margin-top:8px"><span class="badge b-red">수신거부됨</span> <span class="muted">${esc(m.unsubscribed_at || "")}</span> — 회원이 직접 수신거부했습니다(광고성 발송 제외).</div>` : ""}
 <button class="btn" style="margin-top:16px">저장</button>
 </form>
 <form method="POST" action="/members/${m.id}/delete" style="display:inline" onsubmit="return confirm('삭제할까요?')"><button class="btn gray sm" style="margin-top:10px">회원 삭제</button></form>
@@ -354,7 +357,29 @@ function memberNewBody(D) {
 <div class="panel"><form method="POST" action="/members/new">
 <div class="row"><div><label>전화번호 *</label><input name="phone" required></div><div><label>이름</label><input name="name"></div><div><label>회원권 종류</label><input name="membership_type"></div></div>
 <div class="row"><div><label>만료일</label><input name="expire_date" value="${esc(D.todayPlus(90))}"></div><div><label>가입일</label><input name="join_date" value="${esc(D.todayPlus(0))}"></div><div><label>PT 총/잔여</label><input name="pt_total" placeholder="0"></div></div>
+<label style="display:flex;align-items:center;gap:8px;margin-top:12px;font-weight:400"><input type="checkbox" name="marketing_consent" value="Y" style="width:auto"> 마케팅 정보 수신 동의 (광고성 알림톡 — 회원 동의 확인 후 체크)</label>
 <button class="btn" style="margin-top:14px">추가</button></form></div>`;
 }
+function publicShell(title, body) {
+  return `<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)}</title><style>body{font-family:system-ui,-apple-system,sans-serif;max-width:760px;margin:0 auto;padding:32px 20px;color:#1a2330;line-height:1.7}h1{font-size:22px}h2{font-size:17px;margin-top:24px}a{color:#B26B00}</style></head><body>${body}</body></html>`;
+}
+function privacyPage() {
+  return publicShell("개인정보 처리방침", `<h1>개인정보 처리방침</h1>
+<p>본 서비스(헬스장 챗봇 · 사장님 포털, 이하 "서비스")는 이용자의 개인정보를 중요시하며 관련 법령을 준수합니다.</p>
+<h2>1. 수집 항목</h2><p>회원 전화번호·이름·회원권/PT 이용정보·출석·상담내역, 마케팅 수신동의 여부. (챗봇 이용 시 카카오 사용자 식별키)</p>
+<h2>2. 이용 목적</h2><p>회원 본인확인 및 회원권·PT·예약 등 서비스 제공, 만료·이용현황 안내, (동의 시) 마케팅 정보 발송, 매장 운영 통계.</p>
+<h2>3. 보유 및 파기</h2><p>회원 자격 종료 또는 가맹 헬스장의 삭제 요청 시까지 보유하며, 목적 달성 후 지체 없이 파기합니다.</p>
+<h2>4. 처리 위탁</h2><p>가맹 헬스장(개인정보처리자)을 대신하여 본 서비스가 수탁 처리하며, 알림톡 발송은 카카오 및 발송대행사에 위탁될 수 있습니다.</p>
+<h2>5. 마케팅 수신 및 철회</h2><p>광고성 정보는 사전 수신동의한 회원에게만 발송하며, 각 메시지의 <b>무료수신거부</b> 링크로 언제든 철회할 수 있습니다.</p>
+<h2>6. 이용자 권리</h2><p>본인 정보의 열람·정정·삭제·처리정지를 이용 중인 헬스장 또는 서비스 운영자에게 요청할 수 있습니다.</p>
+<h2>7. 문의</h2><p>개인정보 보호책임자: 서비스 운영자 (연락처는 실서비스 배포 시 기재)</p>
+<p style="margin-top:24px;color:#888">※ 본 문서는 기본 템플릿입니다. 상용화 전 사업자 정보·연락처 기입 및 법무 검토를 권장합니다.</p>
+<p><a href="/login">← 로그인으로</a></p>`);
+}
+function unsubPage(ok) {
+  return publicShell("수신거부", ok
+    ? `<h1>✅ 수신거부가 완료되었습니다</h1><p>앞으로 광고성 메시지를 보내드리지 않습니다. 회원권·이용 안내 등 필수 정보성 알림은 계속 발송될 수 있습니다.</p>`
+    : `<h1>링크가 올바르지 않습니다</h1><p>수신거부 링크가 만료되었거나 잘못되었습니다. 이용 중인 헬스장에 문의해 주세요.</p>`);
+}
 
-module.exports = { esc, layout, loginPage, registerPage, dashboardBody, membersBody, memberDetailBody, memberNewBody, ptBody, reportsBody, inboxBody, settingsBody, connectBody, sendsBody };
+module.exports = { esc, layout, loginPage, registerPage, dashboardBody, membersBody, memberDetailBody, memberNewBody, ptBody, reportsBody, inboxBody, settingsBody, connectBody, sendsBody, privacyPage, unsubPage };

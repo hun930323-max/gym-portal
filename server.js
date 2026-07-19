@@ -90,7 +90,7 @@ function parseCSV(text) {
   if (field.length || row.length) { row.push(field); rows.push(row); }
   if (!rows.length) return [];
   const header = rows[0].map((h) => h.trim());
-  const map = { "전화번호": "phone", "이름": "name", "회원권종류": "membership_type", "회원권": "membership_type", "만료일": "expire_date", "가입일": "join_date", "PT총회": "pt_total", "PT잔여": "pt_remain", "PT담당강사": "pt_trainer", "락커여부": "locker", "락커만료일": "locker_expire", "메모": "memo" };
+  const map = { "전화번호": "phone", "이름": "name", "회원권종류": "membership_type", "회원권": "membership_type", "만료일": "expire_date", "가입일": "join_date", "PT총회": "pt_total", "PT잔여": "pt_remain", "PT담당강사": "pt_trainer", "락커여부": "locker", "락커만료일": "locker_expire", "메모": "memo", "마케팅동의": "marketing_consent" };
   return rows.slice(1).filter((r) => r.some((v) => v && v.trim())).map((r) => {
     const o = {};
     header.forEach((h, i) => { const key = map[h] || h; o[key] = (r[i] || "").trim(); });
@@ -118,19 +118,29 @@ app.post("/register", (req, res) => {
 });
 app.get("/logout", (req, res) => req.session.destroy(() => res.redirect("/login")));
 
+// ── 개인정보 처리방침 (공개) ──
+app.get("/privacy", (req, res) => res.send(V.privacyPage()));
+// ── 마케팅 수신거부 (공개 · 알림톡 링크로 접속) ──
+app.get("/u/:token", (req, res) => {
+  const v = D.verifyUnsubToken(req.params.token);
+  if (!v) return res.status(400).send(V.unsubPage(false));
+  D.setUnsubscribed(v.gymId, v.memberId);
+  res.send(V.unsubPage(true));
+});
+
 // ── 대시보드 ──
 app.get("/dashboard", auth, (req, res) => page(req, res, "dashboard", "대시보드", V.dashboardBody(D.metrics(req.gymId, 7))));
 
 // ── 회원 관리 ──
 app.get("/members/sample.csv", auth, (req, res) => {
   res.set("Content-Type", "text/csv; charset=utf-8").set("Content-Disposition", "attachment; filename=members_sample.csv")
-    .send("﻿전화번호,이름,회원권종류,만료일,가입일,PT총회,PT잔여,PT담당강사,락커여부,락커만료일,메모\n01012341234,김샘플,헬스 3개월,2026-12-31,2026-07-01,10,7,김코치,Y,2026-12-31,\n01098765432,이샘플,헬스 1개월,2026-08-31,2026-07-10,0,0,,N,,신규상담\n");
+    .send("﻿전화번호,이름,회원권종류,만료일,가입일,PT총회,PT잔여,PT담당강사,락커여부,락커만료일,메모,마케팅동의\n01012341234,김샘플,헬스 3개월,2026-12-31,2026-07-01,10,7,김코치,Y,2026-12-31,,Y\n01098765432,이샘플,헬스 1개월,2026-08-31,2026-07-10,0,0,,N,,신규상담,N\n");
 });
 // 회원 CSV 내보내기 (업로드 양식과 호환 → 재업로드 가능) · :id 라우트보다 먼저 등록
 function csvCell(v) { v = v == null ? "" : String(v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; }
 function membersToCsv(list) {
-  const head = ["전화번호", "이름", "회원권종류", "만료일", "가입일", "PT총회", "PT잔여", "PT담당강사", "락커여부", "락커만료일", "메모"];
-  const rows = list.map((m) => [m.phone, m.name, m.membership_type, m.expire_date, m.join_date, m.pt_total, m.pt_remain, m.pt_trainer, m.locker ? "Y" : "N", m.locker_expire, m.memo].map(csvCell).join(","));
+  const head = ["전화번호", "이름", "회원권종류", "만료일", "가입일", "PT총회", "PT잔여", "PT담당강사", "락커여부", "락커만료일", "메모", "마케팅동의"];
+  const rows = list.map((m) => [m.phone, m.name, m.membership_type, m.expire_date, m.join_date, m.pt_total, m.pt_remain, m.pt_trainer, m.locker ? "Y" : "N", m.locker_expire, m.memo, m.marketing_consent ? "Y" : "N"].map(csvCell).join(","));
   return "﻿" + [head.join(","), ...rows].join("\n");
 }
 app.get("/members/export.csv", auth, (req, res) => {
@@ -142,7 +152,7 @@ app.get("/data/export.json", auth, (req, res) => {
 app.get("/members/new", auth, (req, res) => page(req, res, "members", "회원 추가", V.memberNewBody(D)));
 app.post("/members/new", auth, (req, res) => {
   const b = req.body;
-  D.upsertMember(req.gymId, { phone: b.phone, name: b.name, membership_type: b.membership_type, expire_date: b.expire_date, join_date: b.join_date, pt_total: b.pt_total, pt_remain: b.pt_total });
+  D.upsertMember(req.gymId, { phone: b.phone, name: b.name, membership_type: b.membership_type, expire_date: b.expire_date, join_date: b.join_date, pt_total: b.pt_total, pt_remain: b.pt_total, marketing_consent: b.marketing_consent ? "Y" : "" });
   flash(req, "회원이 추가되었습니다.");
   res.redirect("/members");
 });
@@ -170,10 +180,12 @@ app.get("/members/:id", auth, (req, res) => {
 });
 app.post("/members/:id", auth, (req, res) => {
   const b = req.body;
+  const consent = /^(y|on|true)/i.test(b.marketing_consent || "");
   D.updateMember(req.gymId, Number(req.params.id), {
     name: b.name, membership_type: b.membership_type, expire_date: b.expire_date, join_date: b.join_date,
     pt_total: Number(b.pt_total) || 0, pt_remain: Number(b.pt_remain) || 0, pt_trainer: b.pt_trainer,
     locker: /^y/i.test(b.locker || ""), memo: b.memo,
+    marketing_consent: consent, marketing_consent_at: consent ? new Date().toISOString().slice(0, 16).replace("T", " ") : "",
   });
   flash(req, "저장되었습니다.");
   res.redirect("/members/" + req.params.id);

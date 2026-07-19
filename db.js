@@ -175,6 +175,11 @@ function upsertMember(gymId, row) {
     locker: /^(y|yes|true|1|o|이용)/i.test(String(row.locker || "")),
     locker_expire: row.locker_expire || "", memo: row.memo || "",
   };
+  // 마케팅 수신동의는 값이 있을 때만 반영(빈 값이면 기존 유지)
+  if (row.marketing_consent !== undefined && String(row.marketing_consent).trim() !== "") {
+    fields.marketing_consent = /^(y|yes|true|1|o|동의)/i.test(String(row.marketing_consent));
+    if (fields.marketing_consent) fields.marketing_consent_at = new Date().toISOString().slice(0, 16).replace("T", " ");
+  }
   if (m) { Object.assign(m, fields); save(); return { updated: true }; }
   db.members.push({ id: nextId(), gym_id: gymId, phone, ...fields });
   save();
@@ -239,7 +244,15 @@ function notifyMember(gymId, { member_id, phone, name, kind, message, variables,
   return { status: log.status, log };
 }
 
-// 자동 발송 스캔: 재등록 D-7/D-3/D-day · 휴면 2주+ · PT 잔여 ≤2 대상 선별 후 발송(중복 방지)
+// ── 마케팅 수신거부(opt-out) · 야간발송 제한 ──
+const PORTAL_URL = process.env.PORTAL_URL || "https://gym-portal-hgbe.onrender.com";
+const UNSUB_SECRET = process.env.UNSUB_SECRET || process.env.SESSION_SECRET || "gym-portal-unsub-secret";
+function unsubToken(gymId, memberId) { const sig = crypto.createHmac("sha256", UNSUB_SECRET).update(gymId + ":" + memberId).digest("hex").slice(0, 16); return `${gymId}.${memberId}.${sig}`; }
+function verifyUnsubToken(token) { const p = String(token || "").split("."); if (p.length !== 3) return null; const expect = crypto.createHmac("sha256", UNSUB_SECRET).update(p[0] + ":" + p[1]).digest("hex").slice(0, 16); if (p[2] !== expect) return null; return { gymId: Number(p[0]), memberId: Number(p[1]) }; }
+function setUnsubscribed(gymId, memberId) { const m = member(gymId, memberId); if (!m) return null; m.unsubscribed = true; m.unsubscribed_at = new Date().toISOString().slice(0, 16).replace("T", " "); save(); return m; }
+function isDaytimeKST() { const h = (new Date().getUTCHours() + 9) % 24; return h >= 8 && h < 21; } // 광고성은 21~08시 발송 금지
+
+// 자동 발송 스캔: 재등록 D-7/D-3/D-day(정보성) · 휴면 2주+(광고성) · PT 잔여 ≤2(정보성)
 function runAutoSends(gymId) {
   const s = getSettings(gymId);
   const gymName = s.gym_name || (getGym(gymId) || {}).name || "";
@@ -258,18 +271,20 @@ function runAutoSends(gymId) {
       }
     }
   }
-  // 2) 휴면 케어 (최근 방문 14일+ 경과, 7일 주기 1회)
-  if (s.auto_dormant !== false) {
+  // 2) 휴면 케어 (광고성) — 마케팅 수신동의 O + 수신거부 X + 야간(21~08시 KST) 금지 준수
+  if (s.auto_dormant !== false && isDaytimeKST()) {
     const att = byGym("attendance", gymId);
     const last = {};
     att.forEach((a) => { if (!last[a.member_id] || a.date > last[a.member_id]) last[a.member_id] = a.date; });
     const week = Math.floor(dayIdx(today) / 7);
     for (const m of ms) {
       if (!m.phone) continue;
+      if (!m.marketing_consent || m.unsubscribed) { out.skipped++; continue; } // 광고성 동의·수신거부 준수
       const lv = last[m.id];
       const gap = lv ? dayIdx(today) - dayIdx(lv) : 999;
       if (gap >= 14) {
-        const msg = `[${gymName}] ${m.name}님, 요즘 뜸하시네요! 🏋️\n2주 넘게 안 오셨어요. 오늘 가볍게 몸 풀러 오시는 건 어때요? 기다릴게요!`;
+        const optout = `\n\n무료수신거부 ${PORTAL_URL}/u/${unsubToken(gymId, m.id)}`;
+        const msg = `[${gymName}] (광고) ${m.name}님, 요즘 뜸하시네요! 🏋️\n2주 넘게 안 오셨어요. 오늘 가볍게 몸 풀러 오시는 건 어때요? 기다릴게요!` + optout;
         if (trySend(m, "휴면케어", msg, `dormant:${m.id}:${week}`)) out.dormant++;
       }
     }
@@ -367,4 +382,5 @@ module.exports = {
   members, member, ptMembers, leads, requests, sendLogs, getSettings, setSettings,
   upsertMember, updateMember, deleteMember, addPtSession, ptSessions,
   setLeadStatus, setRequestStatus, addSendLog, notifyMember, runAutoSends, metrics,
+  unsubToken, verifyUnsubToken, setUnsubscribed,
 };
