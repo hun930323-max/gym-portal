@@ -1,17 +1,44 @@
 // 헬스장 챗봇 SaaS — 사장님 웹 포털 (MVP)
 const express = require("express");
 const session = require("express-session");
+const rateLimit = require("express-rate-limit");
 const multer = require("multer");
 const D = require("./db");
 const V = require("./views");
 
+const PROD = process.env.NODE_ENV === "production" || !!process.env.RENDER;
+if (PROD && (!process.env.SESSION_SECRET)) console.warn("[warn] SESSION_SECRET 미설정 — 프로덕션에선 반드시 환경변수로 지정하세요.");
+
 D.load();
 const app = express();
+app.set("trust proxy", 1); // Render 등 프록시 뒤에서 secure 쿠키/실제 IP 인식
 app.use(express.json()); // 카카오 스킬(JSON) 바디
 app.use(express.urlencoded({ extended: false }));
-// 챗봇 스킬 엔드포인트(/skill/*) — 포털과 같은 DB 사용 (인증 불필요)
+
+// 스킬 남용 방지 레이트리밋 (봇/IP당)
+const skillLimiter = rateLimit({ windowMs: 60 * 1000, max: 120, standardHeaders: true, legacyHeaders: false });
+app.use("/skill", skillLimiter);
+// 챗봇 스킬 엔드포인트(/skill/*) — SKILL_KEY 설정 시 헤더 검증(skill.js 내부)
 require("./skill").register(app);
-app.use(session({ secret: process.env.SESSION_SECRET || "gym-portal-dev-secret", resave: false, saveUninitialized: false }));
+
+app.use(session({
+  secret: process.env.SESSION_SECRET || "gym-portal-dev-secret",
+  resave: false, saveUninitialized: false,
+  cookie: { httpOnly: true, sameSite: "lax", secure: PROD, maxAge: 7 * 24 * 60 * 60 * 1000 },
+}));
+
+// CSRF 방어: 상태변경 요청(포털)에 대해 Origin이 다른 사이트면 차단 (스킬/크론 제외, SameSite=lax와 이중 방어)
+app.use((req, res, next) => {
+  if (["POST", "PUT", "PATCH", "DELETE"].includes(req.method) && !req.path.startsWith("/skill/") && !req.path.startsWith("/cron/")) {
+    const origin = req.get("origin");
+    if (origin) { try { if (new URL(origin).host !== req.get("host")) return res.status(403).send("요청 출처가 올바르지 않습니다."); } catch (e) {} }
+  }
+  next();
+});
+
+// 로그인 무차별 시도 방어 (IP당 15분 10회)
+const loginLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 10, standardHeaders: true, legacyHeaders: false, message: "로그인 시도가 너무 많습니다. 잠시 후 다시 시도해 주세요." });
+
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 
 // ── 인증 미들웨어 ──
@@ -74,7 +101,7 @@ function parseCSV(text) {
 // ── 인증 라우트 ──
 app.get("/", (req, res) => res.redirect(req.session.ownerId ? "/dashboard" : "/login"));
 app.get("/login", (req, res) => { const { f, e } = clearFlash(req); res.send(V.loginPage(f, e)); });
-app.post("/login", (req, res) => {
+app.post("/login", loginLimiter, (req, res) => {
   const o = D.verifyOwner(req.body.email, req.body.password);
   if (!o) { flash(req, "이메일 또는 비밀번호가 올바르지 않습니다.", true); return res.redirect("/login"); }
   req.session.ownerId = o.id;

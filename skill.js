@@ -9,7 +9,7 @@ const qr = (l, m) => ({ label: l, action: "message", messageText: m || l });
 const btnMsg = (l) => ({ action: "message", label: l, messageText: l });
 const won = (n) => (Number(n) || 0).toLocaleString("ko-KR") + "원";
 const mask = (p) => String(p || "").replace(/(\d{3})(\d{3,4})(\d{4})/, "$1-****-$3");
-const ddayOf = (e) => (e ? Math.ceil((Date.parse(e + "T23:59:59Z") - Date.now()) / 86400000) : null);
+const ddayOf = (e) => (e ? dayIdx(e) - dayIdx(todayStr()) : null); // 정확한 잔여 일수 (오늘 만료=0)
 
 const gymOf = (body) => D.gymByBot(body?.bot?.id);
 const utterOf = (body) => body?.userRequest?.utterance || "";
@@ -71,6 +71,14 @@ function notFoundCard(res) {
 const MENU = [qr("회원권 조회", "내 회원권 조회"), qr("PT 현황", "PT 현황"), qr("가격 안내", "가격"), qr("무료 상담 신청", "무료 상담 신청")];
 
 function register(app) {
+  // 스킬 요청 인증: SKILL_KEY 설정 시 오픈빌더 스킬 헤더(X-Skill-Key) 일치 요구 (미설정 시 하위호환 허용)
+  app.use("/skill", (req, res, next) => {
+    const key = process.env.SKILL_KEY;
+    if (key && req.get("x-skill-key") !== key) {
+      return res.status(401).json({ version: "2.0", template: { outputs: [{ simpleText: { text: "인증되지 않은 요청입니다." } }] } });
+    }
+    next();
+  });
   // 웰컴
   app.post("/skill/welcome", (req, res) => {
     const s = settingsOf(req.body);

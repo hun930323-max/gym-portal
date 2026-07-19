@@ -77,12 +77,12 @@ function seed() {
   db.gyms.push({ id: gymId, name: "○○피트니스", phone: "02-000-0000", address: "서울 강남구 ○○로 123", created_at: todayPlus(0) });
   db.owners.push({
     id: nextId(), gym_id: gymId, email: "demo@demo.com",
-    password_hash: bcrypt.hashSync("demo1234", 8), name: "데모 사장님", is_admin: false, created_at: todayPlus(0),
+    password_hash: bcrypt.hashSync("demo1234", 12), name: "데모 사장님", is_admin: false, created_at: todayPlus(0),
   });
   // 운영자(우리) 전용 계정 — 매장설정·챗봇연결·발송관리 관리 권한
   db.owners.push({
     id: nextId(), gym_id: gymId, email: "admin@gym-portal.com",
-    password_hash: bcrypt.hashSync("admin1234", 8), name: "운영자", is_admin: true, created_at: todayPlus(0),
+    password_hash: bcrypt.hashSync(process.env.ADMIN_PASSWORD || "admin1234", 12), name: "운영자", is_admin: true, created_at: todayPlus(0),
   });
   db.settings[gymId] = {
     gym_name: "○○피트니스",
@@ -136,7 +136,7 @@ function createOwnerWithGym({ email, password, name, gymName }) {
   if (getOwnerByEmail(email)) return { error: "이미 가입된 이메일입니다." };
   const gymId = nextId();
   db.gyms.push({ id: gymId, name: gymName, phone: "", address: "", created_at: todayPlus(0) });
-  const owner = { id: nextId(), gym_id: gymId, email, password_hash: bcrypt.hashSync(password, 8), name, is_admin: false, created_at: todayPlus(0) };
+  const owner = { id: nextId(), gym_id: gymId, email, password_hash: bcrypt.hashSync(password, 12), name, is_admin: false, created_at: todayPlus(0) };
   db.owners.push(owner);
   db.settings[gymId] = { gym_name: gymName, price: "", trainers: "", notices: "", events: "", facility: "", gx_schedule: "", rental: "", lostfound: "", parking: "", send_enabled: false };
   save();
@@ -291,7 +291,8 @@ function runAutoSends(gymId) {
 
 // ── 집계(대시보드/리포트) ──
 const dayIdx = (s) => Math.floor(Date.parse(s + "T00:00:00Z") / 86400000);
-function ddayOf(expire) { return expire ? Math.ceil((Date.parse(expire + "T23:59:59Z") - Date.now()) / 86400000) : null; }
+// 정확한 잔여 일수: 만료일 - 오늘 (날짜 인덱스 차이). 오늘 만료 = 0, 내일 = 1
+function ddayOf(expire) { return expire ? dayIdx(expire) - dayIdx(todayPlus(0)) : null; }
 function metrics(gymId, days = 7) {
   const ms = members(gymId);
   const cut = dayIdx(todayPlus(0)) - days;
