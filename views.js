@@ -48,6 +48,32 @@ label{display:block;font-size:12px;color:#6B7280;margin:12px 0 5px;font-weight:6
 .tabs a{padding:7px 14px;border-radius:20px;background:#EEF1F4;font-weight:700;font-size:13px}
 .tabs a.on{background:#1B2430;color:#fff}
 .up{border:2px dashed #D8DDE3;border-radius:12px;padding:18px;text-align:center;background:#FAFBFC}
+.navtoggle{display:none}
+.tablewrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+@media (max-width:820px){
+  .layout{display:block}
+  .side{width:auto;flex:none;padding:14px 0 10px;position:sticky;top:0;z-index:20}
+  .side .brand{padding:0 16px 2px}
+  .side .gym{padding:0 16px 12px;margin-bottom:8px}
+  .side nav,.side .navlinks{display:flex;flex-wrap:wrap;gap:6px;padding:0 12px}
+  .side a{padding:9px 13px;border-radius:20px;background:#26313f;font-size:13px}
+  .side a.active,.side a:hover{border-left:none;background:#FFB020;color:#1B2430}
+  .side .logout{margin:10px 0 0 12px}
+  .main{padding:16px 14px;max-width:100%}
+  h1{font-size:19px}
+  .cards{grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:16px}
+  .card{padding:13px 14px;border-radius:12px}
+  .card .v{font-size:20px}
+  .panel{padding:15px 14px;border-radius:12px;margin-bottom:14px;overflow-x:auto;-webkit-overflow-scrolling:touch}
+  table{font-size:12.5px;min-width:520px}
+  th,td{padding:8px 8px}
+  .row{gap:8px}
+  .row>div{min-width:100%}
+  input,select,textarea{font-size:16px;padding:11px 12px}
+  .btn{padding:11px 16px;font-size:14px}
+  .btn.sm{padding:8px 12px;font-size:13px}
+  .auth{margin:5vh auto;padding:22px;max-width:94%}
+}
 `;
 
 function layout({ title, owner, gym, active, body, flash, flashErr }) {
@@ -63,9 +89,9 @@ function layout({ title, owner, gym, active, body, flash, flashErr }) {
     ["/connect", "챗봇 연결", "connect"],
     ["/sends", "발송 관리", "sends"],
   ];
-  const items = (owner && owner.is_admin) ? baseNav.concat(adminNav) : baseNav;
-  const nav = items.map(([href, label, key]) => `<a href="${href}" class="${active === key ? "active" : ""}">${label}</a>`).join("")
-    + ((owner && owner.is_admin) ? `<div style="margin:8px 16px 0;font-size:11px;color:#7c8a99">운영자 전용 ▲</div>` : "");
+  const items = ((owner && owner.is_admin) ? baseNav.concat(adminNav) : baseNav).concat([["/account", "내 계정", "account"]]);
+  const nav = `<div class="navlinks">` + items.map(([href, label, key]) => `<a href="${href}" class="${active === key ? "active" : ""}">${label}</a>`).join("") + `</div>`
+    + ((owner && owner.is_admin) ? `<div style="margin:8px 16px 0;font-size:11px;color:#7c8a99">운영자 전용 포함</div>` : "");
   return `<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)} · 사장님 포털</title><style>${CSS}</style></head>
 <body><div class="layout">
 <nav class="side">
@@ -360,6 +386,25 @@ function memberNewBody(D) {
 <label style="display:flex;align-items:center;gap:8px;margin-top:12px;font-weight:400"><input type="checkbox" name="marketing_consent" value="Y" style="width:auto"> 마케팅 정보 수신 동의 (광고성 알림톡 — 회원 동의 확인 후 체크)</label>
 <button class="btn" style="margin-top:14px">추가</button></form></div>`;
 }
+function accountBody(owner, gym) {
+  return `<h1>내 계정</h1><div class="sub">${esc(owner ? owner.name : "")} · ${esc(owner ? owner.email : "")}${owner && owner.is_admin ? ` <span class="badge b-gold">운영자</span>` : ` · ${esc(gym ? gym.name : "")}`}</div>
+<div class="panel"><h2>비밀번호 변경</h2>
+<form method="POST" action="/account/password">
+<label>현재 비밀번호</label><input type="password" name="current_password" required autocomplete="current-password">
+<label>새 비밀번호 (8자 이상)</label><input type="password" name="new_password" minlength="8" required autocomplete="new-password">
+<button class="btn" style="margin-top:14px">비밀번호 변경</button>
+</form>
+<p class="muted" style="margin-top:12px">· 변경 후에도 로그인 상태는 유지됩니다. 다른 기기에서는 새 비밀번호로 로그인하세요.${owner && owner.password_changed_at ? `<br>· 최근 변경: ${esc(owner.password_changed_at)}` : ""}</p>
+</div>
+<div class="panel"><h2>계정 정보</h2>
+<table><tbody>
+<tr><th>이름</th><td>${esc(owner ? owner.name : "")}</td></tr>
+<tr><th>이메일</th><td>${esc(owner ? owner.email : "")}</td></tr>
+<tr><th>권한</th><td>${owner && owner.is_admin ? "운영자 (매장설정·챗봇연결·발송관리 접근)" : "사장님 (내 매장 관리)"}</td></tr>
+${owner && !owner.is_admin ? `<tr><th>매장</th><td>${esc(gym ? gym.name : "")}</td></tr>` : ""}
+</tbody></table>
+<p class="muted" style="margin-top:10px"><a href="/privacy">개인정보 처리방침</a></p></div>`;
+}
 function publicShell(title, body) {
   return `<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)}</title><style>body{font-family:system-ui,-apple-system,sans-serif;max-width:760px;margin:0 auto;padding:32px 20px;color:#1a2330;line-height:1.7}h1{font-size:22px}h2{font-size:17px;margin-top:24px}a{color:#B26B00}</style></head><body>${body}</body></html>`;
 }
@@ -382,4 +427,4 @@ function unsubPage(ok) {
     : `<h1>링크가 올바르지 않습니다</h1><p>수신거부 링크가 만료되었거나 잘못되었습니다. 이용 중인 헬스장에 문의해 주세요.</p>`);
 }
 
-module.exports = { esc, layout, loginPage, registerPage, dashboardBody, membersBody, memberDetailBody, memberNewBody, ptBody, reportsBody, inboxBody, settingsBody, connectBody, sendsBody, privacyPage, unsubPage };
+module.exports = { esc, layout, loginPage, registerPage, dashboardBody, membersBody, memberDetailBody, memberNewBody, ptBody, reportsBody, inboxBody, settingsBody, connectBody, sendsBody, privacyPage, unsubPage, accountBody };

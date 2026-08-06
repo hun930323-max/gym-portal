@@ -128,6 +128,14 @@ app.get("/u/:token", (req, res) => {
   res.send(V.unsubPage(true));
 });
 
+// ── 내 계정 (비밀번호 변경) ──
+app.get("/account", auth, (req, res) => { const { f, e } = clearFlash(req); page(req, res, "account", "내 계정", V.accountBody(req.owner, req.gym), { flash: f, flashErr: e }); });
+app.post("/account/password", auth, (req, res) => {
+  const r = D.changePassword(req.owner.id, req.body.current_password, req.body.new_password);
+  if (r.error) flash(req, r.error, true); else flash(req, "비밀번호가 변경되었습니다.");
+  res.redirect("/account");
+});
+
 // ── 대시보드 ──
 app.get("/dashboard", auth, (req, res) => page(req, res, "dashboard", "대시보드", V.dashboardBody(D.metrics(req.gymId, 7))));
 

@@ -148,6 +148,17 @@ function verifyOwner(email, password) {
   return bcrypt.compareSync(password, o.password_hash) ? o : null;
 }
 function getOwner(id) { return db.owners.find((o) => o.id === id); }
+// 비밀번호 변경 (현재 비번 확인 후 교체)
+function changePassword(ownerId, currentPw, newPw) {
+  const o = getOwner(ownerId);
+  if (!o) return { error: "계정을 찾을 수 없습니다." };
+  if (!bcrypt.compareSync(currentPw || "", o.password_hash)) return { error: "현재 비밀번호가 올바르지 않습니다." };
+  if (!newPw || String(newPw).length < 8) return { error: "새 비밀번호는 8자 이상이어야 합니다." };
+  o.password_hash = bcrypt.hashSync(String(newPw), 12);
+  o.password_changed_at = new Date().toISOString().slice(0, 16).replace("T", " ");
+  save();
+  return { ok: true };
+}
 function getGym(id) { return db.gyms.find((g) => g.id === id); }
 function allGyms() { return db.gyms.slice(); } // 운영자 지점 선택용
 
@@ -378,7 +389,7 @@ module.exports = {
   load, save, reseed, todayPlus, ddayOf, lastBackupInfo, gymExport,
   gymByBot, getBotByGym, setBotForGym, findMemberByPhone, createLead, createRequest, memberByBotUser, linkBotUser,
   checkinMember, attendanceDates, memberSessions,
-  getOwnerByEmail, createOwnerWithGym, verifyOwner, getOwner, getGym, allGyms,
+  getOwnerByEmail, createOwnerWithGym, verifyOwner, getOwner, getGym, allGyms, changePassword,
   members, member, ptMembers, leads, requests, sendLogs, getSettings, setSettings,
   upsertMember, updateMember, deleteMember, addPtSession, ptSessions,
   setLeadStatus, setRequestStatus, addSendLog, notifyMember, runAutoSends, metrics,
