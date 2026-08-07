@@ -19,7 +19,7 @@ function blank() {
   return {
     _seq: 1,
     gyms: [], owners: [], members: [], attendance: [], pt_sessions: [],
-    leads: [], requests: [], payments: [], send_logs: [], settings: {}, bots: [], bot_users: [],
+    leads: [], requests: [], payments: [], send_logs: [], settings: {}, bots: [], bot_users: [], products: [],
   };
 }
 function nextId() { return db._seq++; }
@@ -290,6 +290,69 @@ function removeAttendance(gymId, memberId, date) { const before = db.attendance.
 
 function setLeadStatus(gymId, id, status) { const l = db.leads.find((x) => x.gym_id === gymId && x.id === id); if (l) { l.status = status; save(); } }
 function setRequestStatus(gymId, id, status) { const r = db.requests.find((x) => x.gym_id === gymId && x.id === id); if (r) { r.status = status; save(); } }
+
+// ── 리드 → 회원 전환 (상담신청이 실제 등록으로 이어질 때) ──
+function convertLead(gymId, leadId, opts) {
+  const l = db.leads.find((x) => x.gym_id === gymId && x.id === leadId);
+  if (!l) return { error: "상담 신청을 찾을 수 없습니다." };
+  const phone = String(l.phone || "").replace(/\D/g, "");
+  if (!phone) return { error: "연락처가 없어 회원으로 전환할 수 없습니다." };
+  const exists = db.members.find((m) => m.gym_id === gymId && m.phone === phone);
+  const o = opts || {};
+  const prod = o.product_id ? getProduct(gymId, Number(o.product_id)) : null;
+  const months = prod ? Number(prod.months) || 0 : Number(o.months) || 0;
+  const row = {
+    phone, name: l.name || "고객",
+    membership_type: prod ? prod.name : (o.membership_type || ""),
+    expire_date: months ? todayPlus(months * 30) : (o.expire_date || ""),
+    join_date: todayPlus(0),
+    pt_total: prod ? (Number(prod.pt_count) || 0) : (Number(o.pt_total) || 0),
+    pt_remain: prod ? (Number(prod.pt_count) || 0) : (Number(o.pt_total) || 0),
+    memo: l.interest ? `상담 관심: ${l.interest}` : "",
+  };
+  const r = upsertMember(gymId, row);
+  const m = db.members.find((x) => x.gym_id === gymId && x.phone === phone);
+  // 상품이 지정되면 결제도 함께 기록 (매출 반영)
+  if (prod && m && Number(prod.price) > 0) addPayment(gymId, m.id, { item: prod.name, amount: prod.price, paid_at: todayPlus(0), method: o.method || "" });
+  l.status = "등록완료"; l.converted_member_id = m ? m.id : null; save();
+  return { ok: true, member: m, existed: !!exists, created: !!r.created };
+}
+
+// ── PT 예약 요청 → 세션 확정 ──
+function confirmReservation(gymId, requestId, { date, time, trainer }) {
+  const r = db.requests.find((x) => x.gym_id === gymId && x.id === requestId);
+  if (!r) return { error: "요청을 찾을 수 없습니다." };
+  if (!r.member_id) return { error: "회원 정보가 없는 요청입니다." };
+  const m = member(gymId, r.member_id);
+  if (!m) return { error: "회원을 찾을 수 없습니다." };
+  const s = addPtSession(gymId, m.id, { trainer: trainer || m.pt_trainer || "", date: date || todayPlus(1), time: time || "19:00", status: "예약", feedback: "", homework: "" });
+  r.status = "확정"; r.session_id = s.id; save();
+  return { ok: true, session: s, member: m };
+}
+
+// ── 회원권 상품 마스터 ──
+function products(gymId) { return (db.products || []).filter((p) => p.gym_id === gymId); }
+function getProduct(gymId, id) { return (db.products || []).find((p) => p.gym_id === gymId && p.id === id) || null; }
+function addProduct(gymId, { name, months, price, pt_count }) {
+  if (!db.products) db.products = [];
+  if (!String(name || "").trim()) return { error: "상품명을 입력해 주세요." };
+  const p = { id: nextId(), gym_id: gymId, name: String(name).trim(), months: Number(months) || 0, price: Number(String(price).replace(/[^\d]/g, "")) || 0, pt_count: Number(pt_count) || 0 };
+  db.products.push(p); save();
+  return { ok: true, product: p };
+}
+function deleteProduct(gymId, id) { if (!db.products) db.products = []; const b = db.products.length; db.products = db.products.filter((p) => !(p.gym_id === gymId && p.id === id)); save(); return { ok: db.products.length < b }; }
+// 회원에게 상품 적용 (만료일 연장 + PT 충전 + 결제 기록)
+function applyProduct(gymId, memberId, productId, { method } = {}) {
+  const m = member(gymId, memberId); const p = getProduct(gymId, Number(productId));
+  if (!m || !p) return { error: "회원 또는 상품을 찾을 수 없습니다." };
+  const base = m.expire_date && dayIdx(m.expire_date) > dayIdx(todayPlus(0)) ? m.expire_date : todayPlus(0); // 남은 기간이 있으면 이어서 연장
+  if (p.months) m.expire_date = new Date(Date.parse(base + "T00:00:00Z") + p.months * 30 * 86400000).toISOString().slice(0, 10);
+  if (p.name) m.membership_type = p.name;
+  if (p.pt_count) { m.pt_total = (Number(m.pt_total) || 0) + p.pt_count; m.pt_remain = (Number(m.pt_remain) || 0) + p.pt_count; }
+  save();
+  if (Number(p.price) > 0) addPayment(gymId, m.id, { item: p.name, amount: p.price, paid_at: todayPlus(0), method: method || "" });
+  return { ok: true, member: m, product: p };
+}
 function addSendLog(gymId, entry) { const log = { id: nextId(), gym_id: gymId, sent_at: new Date().toISOString().slice(0, 16).replace("T", " "), ...entry }; db.send_logs.push(log); save(); return log; }
 
 // 알림톡 발송 어댑터 (Solapi 예시). 자격증명 미설정 시 dry-run.
@@ -466,5 +529,6 @@ module.exports = {
   upsertMember, updateMember, deleteMember, addPtSession, ptSessions, updatePtSession, deletePtSession,
   payments, addPayment, deletePayment, addAttendance, removeAttendance,
   setLeadStatus, setRequestStatus, addSendLog, notifyMember, runAutoSends, metrics,
+  convertLead, confirmReservation, products, getProduct, addProduct, deleteProduct, applyProduct,
   unsubToken, verifyUnsubToken, setUnsubscribed,
 };

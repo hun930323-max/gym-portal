@@ -16,6 +16,7 @@ const utterOf = (body) => body?.userRequest?.utterance || "";
 const phoneOf = (body) => { const m = utterOf(body).match(/01\d{8,9}/); return m ? m[0] : null; };
 const botUserKey = (body) => body?.userRequest?.user?.id || null;
 const settingsOf = (body) => D.getSettings(gymOf(body));
+const getGym0 = (body) => D.getGym(gymOf(body));
 const PORTAL_URL = process.env.PORTAL_URL || "https://gym-portal-hgbe.onrender.com";
 
 // 출석 스트릭/잔디밭 유틸
@@ -277,6 +278,32 @@ function register(app) {
   infoSkill("/skill/rental", "🧺", "대여 안내", "rental", "대여 정보가 아직 등록되지 않았어요.");
   infoSkill("/skill/lostfound", "🔍", "분실물 안내", "lostfound", "분실물 안내가 아직 등록되지 않았어요.");
   infoSkill("/skill/parking", "🚗", "주차 안내", "parking", "주차 정보가 아직 등록되지 않았어요.");
+
+  // 폴백 — 등록된 발화를 벗어난 질문 처리 (키워드 힌트 + 메뉴 + 상담 연결)
+  app.post("/skill/fallback", (req, res) => {
+    const utter = utterOf(req.body);
+    const s = settingsOf(req.body);
+    // 키워드가 잡히면 해당 안내로 바로 연결
+    const hints = [
+      [/(가격|요금|비용|얼마|금액)/, "가격", s.price],
+      [/(시간|영업|오픈|마감|몇시)/, "공지사항", s.notices],
+      [/(주차|차량)/, "주차", s.parking],
+      [/(샤워|사우나|락커|시설|기구)/, "시설", s.facility],
+      [/(수업|GX|요가|필라테스|스피닝)/, "수업시간표", s.gx_schedule],
+      [/(운동복|수건|대여)/, "대여", s.rental],
+      [/(위치|주소|어디)/, "공지사항", (getGym0(req.body) || {}).address],
+    ];
+    for (const [re, label, val] of hints) {
+      if (re.test(utter) && val) {
+        return res.json(skill([text(`💡 이렇게 안내드릴게요!\n\n${val}`)], [qr(label, label), ...MENU]));
+      }
+    }
+    res.json(skill([{ basicCard: {
+      title: "😅 제가 아직 못 알아들었어요",
+      description: `"${utter.slice(0, 20)}"에 대해 정확히 답변드리기 어려워요.\n아래 메뉴에서 골라주시거나, 상담을 남겨주시면 담당자가 직접 연락드릴게요!`,
+      buttons: [btnMsg("무료 상담 신청"), btnMsg("가격 안내")],
+    } }], MENU));
+  });
 
   // 관리자 — 개인정보 노출 금지, 웹 포털로 안내 (PII 게이트)
   app.post("/skill/admin", (req, res) => {

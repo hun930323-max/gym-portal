@@ -83,6 +83,7 @@ function layout({ title, owner, gym, active, body, flash, flashErr }) {
     ["/pt", "PT 회원", "pt"],
     ["/reports", "리포트", "reports"],
     ["/inbox", "상담·요청 접수", "inbox"],
+    ["/products", "회원권 상품", "products"],
   ];
   const adminNav = [
     ["/settings", "매장 설정", "settings"],
@@ -252,6 +253,12 @@ ${m.unsubscribed ? `<div style="margin-top:8px"><span class="badge b-red">수신
 </form>
 <form method="POST" action="/members/${m.id}/delete" style="display:inline" onsubmit="return confirm('삭제할까요?')"><button class="btn gray sm" style="margin-top:10px">회원 삭제</button></form>
 </div>`}
+${isStaffView || !(extra.products || []).length ? "" : `<div class="panel"><h2>🎫 회원권 상품 적용</h2>
+<p class="muted" style="margin-bottom:10px">등록·재등록 시 상품을 고르면 만료일 연장 + PT 충전 + 결제 기록이 자동 처리됩니다.</p>
+<form method="POST" action="/members/${m.id}/apply-product" style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap" onsubmit="return confirm('선택한 상품을 적용할까요?')">
+<div style="flex:1;min-width:200px"><label>상품</label><select name="product_id">${(extra.products || []).map((p) => `<option value="${p.id}">${esc(p.name)}${p.months ? ` · ${p.months}개월` : ""}${p.pt_count ? ` · PT${p.pt_count}회` : ""} · ${won(p.price)}</option>`).join("")}</select></div>
+<div style="min-width:120px"><label>결제수단</label><input name="method" placeholder="카드/현금/이체"></div>
+<button class="btn">적용</button></form></div>`}
 ${isStaffView ? "" : `<div class="panel"><h2>💳 결제 · 매출</h2>
 <p class="muted" style="margin-bottom:10px">누적 ${won(payTotal)} · ${pays.length}건 — 여기 입력한 금액이 대시보드·리포트 매출에 반영됩니다.</p>
 <table><thead><tr><th>결제일</th><th>항목</th><th>금액</th><th>수단</th><th></th></tr></thead><tbody>${payRows}</tbody></table>
@@ -321,14 +328,37 @@ ${statCard("PT 예약", m.ptRes, "건")}
 <div class="muted" style="margin-top:12px">* 실서비스에서는 이 리포트가 매주 월요일 사장님 카톡으로 자동 발송됩니다.</div>
 </div>`;
 }
-function inboxBody(leads, requests) {
+function productsBody(list) {
+  const rows = list.map((p) => `<tr><td><b>${esc(p.name)}</b></td><td>${p.months ? p.months + "개월" : "-"}</td><td>${p.pt_count ? "PT " + p.pt_count + "회" : "-"}</td><td><b>${won(p.price)}</b></td>
+<td><form method="POST" action="/products/${p.id}/delete" onsubmit="return confirm('삭제할까요?')"><button class="btn sm gray">삭제</button></form></td></tr>`).join("") || `<tr><td colspan="5" class="muted">등록된 상품이 없습니다. 아래에서 추가해 주세요.</td></tr>`;
+  return `<h1>회원권 상품</h1><div class="sub">상품을 등록해두면 회원 등록·상담 전환·재등록을 클릭 한 번으로 처리할 수 있어요</div>
+<div class="panel"><h2>📋 상품 목록</h2>
+<table><thead><tr><th>상품명</th><th>기간</th><th>PT</th><th>가격</th><th></th></tr></thead><tbody>${rows}</tbody></table>
+<form method="POST" action="/products" style="margin-top:16px">
+<div class="row">
+<div><label>상품명</label><input name="name" placeholder="예: 헬스 3개월" required></div>
+<div><label>기간(개월)</label><input name="months" placeholder="예: 3"></div>
+<div><label>PT 횟수</label><input name="pt_count" placeholder="예: 10"></div>
+<div><label>가격(원)</label><input name="price" placeholder="예: 259000"></div>
+</div>
+<button class="btn" style="margin-top:12px">상품 추가</button>
+<p class="muted" style="margin-top:10px"><i>· 기간은 1개월=30일로 계산됩니다. · 상품을 회원에게 적용하면 만료일 연장 + PT 충전 + 결제 기록이 한 번에 처리됩니다.</i></p>
+</form></div>`;
+}
+function inboxBody(leads, requests, ctx) {
+  ctx = ctx || {};
+  const prods = ctx.products || [];
+  const D = ctx.D;
+  const prodOpts = `<option value="">상품 선택(선택)</option>` + prods.map((p) => `<option value="${p.id}">${esc(p.name)}${p.months ? ` · ${p.months}개월` : ""}${p.pt_count ? ` · PT${p.pt_count}` : ""}</option>`).join("");
   const st = (s) => s === "신규" || s === "접수" ? "b-gold" : s === "완료" ? "b-green" : "b-gray";
   const lRows = leads.map((l) => `<tr><td>${esc(l.created_at)}</td><td><b>${esc(l.name)}</b></td><td>${esc(maskPhone(l.phone))}</td><td>${esc(l.interest || "-")}</td>
   <td><span class="badge ${st(l.status)}">${esc(l.status)}</span></td>
-  <td><form method="POST" action="/inbox/lead/${l.id}" style="display:flex;gap:6px"><select name="status"><option ${l.status==="신규"?"selected":""}>신규</option><option ${l.status==="연락완료"?"selected":""}>연락완료</option><option ${l.status==="등록"?"selected":""}>등록</option><option ${l.status==="보류"?"selected":""}>보류</option></select><button class="btn sm">변경</button></form></td></tr>`).join("") || `<tr><td colspan="6" class="muted">접수된 상담이 없습니다.</td></tr>`;
+  <td><form method="POST" action="/inbox/lead/${l.id}" style="display:flex;gap:6px"><select name="status"><option ${l.status==="신규"?"selected":""}>신규</option><option ${l.status==="연락완료"?"selected":""}>연락완료</option><option ${l.status==="등록"?"selected":""}>등록</option><option ${l.status==="등록완료"?"selected":""}>등록완료</option><option ${l.status==="보류"?"selected":""}>보류</option></select><button class="btn sm">변경</button></form>
+  ${l.converted_member_id ? `<div style="margin-top:6px"><a class="btn sm gray" href="/members/${l.converted_member_id}">회원 카드 보기</a></div>` : `<form method="POST" action="/inbox/lead/${l.id}/convert" style="display:flex;gap:6px;margin-top:6px" onsubmit="return confirm('이 상담 고객을 회원으로 등록할까요?')"><select name="product_id" style="max-width:180px">${prodOpts}</select><button class="btn sm">회원 전환</button></form>`}</td></tr>`).join("") || `<tr><td colspan="6" class="muted">접수된 상담이 없습니다.</td></tr>`;
   const rRows = requests.map((r) => `<tr><td>${esc(r.created_at)}</td><td><span class="badge b-gray">${esc(r.type)}</span></td><td><b>${esc(r.name)}</b> ${esc(maskPhone(r.phone))}</td><td>${esc(r.detail || "-")}</td>
   <td><span class="badge ${st(r.status)}">${esc(r.status)}</span></td>
-  <td><form method="POST" action="/inbox/request/${r.id}" style="display:flex;gap:6px"><select name="status"><option ${r.status==="접수"?"selected":""}>접수</option><option ${r.status==="처리중"?"selected":""}>처리중</option><option ${r.status==="완료"?"selected":""}>완료</option></select><button class="btn sm">변경</button></form></td></tr>`).join("") || `<tr><td colspan="6" class="muted">접수된 요청이 없습니다.</td></tr>`;
+  <td><form method="POST" action="/inbox/request/${r.id}" style="display:flex;gap:6px"><select name="status"><option ${r.status==="접수"?"selected":""}>접수</option><option ${r.status==="처리중"?"selected":""}>처리중</option><option ${r.status==="확정"?"selected":""}>확정</option><option ${r.status==="완료"?"selected":""}>완료</option></select><button class="btn sm">변경</button></form>
+  ${(String(r.type).includes("PT") || String(r.type).includes("예약")) && r.member_id && !r.session_id ? `<form method="POST" action="/inbox/request/${r.id}/confirm" style="display:flex;gap:4px;margin-top:6px;flex-wrap:wrap"><input name="date" value="${esc(D ? D.todayPlus(1) : "")}" style="width:105px"><input name="time" value="19:00" style="width:64px"><input name="trainer" placeholder="강사" style="width:70px"><button class="btn sm">예약 확정</button></form>` : (r.session_id ? `<div class="muted" style="margin-top:6px;font-size:12px">✅ PT 세션 생성됨</div>` : "")}</td></tr>`).join("") || `<tr><td colspan="6" class="muted">접수된 요청이 없습니다.</td></tr>`;
   return `<h1>상담·요청 접수함</h1><div class="sub">챗봇으로 들어온 신청을 처리하세요</div>
 <div class="panel"><h2>🎟️ 상담·체험 신청 (리드)</h2>
 <table><thead><tr><th>접수</th><th>이름</th><th>전화</th><th>관심</th><th>상태</th><th>처리</th></tr></thead><tbody>${lRows}</tbody></table></div>
@@ -490,4 +520,4 @@ function unsubPage(ok) {
     : `<h1>링크가 올바르지 않습니다</h1><p>수신거부 링크가 만료되었거나 잘못되었습니다. 이용 중인 헬스장에 문의해 주세요.</p>`);
 }
 
-module.exports = { esc, layout, loginPage, registerPage, dashboardBody, membersBody, memberDetailBody, memberNewBody, ptBody, reportsBody, inboxBody, settingsBody, connectBody, sendsBody, privacyPage, unsubPage, accountBody };
+module.exports = { esc, layout, loginPage, registerPage, dashboardBody, membersBody, memberDetailBody, memberNewBody, ptBody, reportsBody, inboxBody, productsBody, settingsBody, connectBody, sendsBody, privacyPage, unsubPage, accountBody };

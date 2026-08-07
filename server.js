@@ -218,7 +218,7 @@ app.get("/members/:id", auth, (req, res) => {
   // 스태프는 담당 PT 회원만 열람 가능
   if (req.isStaff && !D.canStaffAccessMember(req.gymId, req.trainerName, m.id)) { flash(req, "담당 회원만 조회할 수 있습니다.", true); return res.redirect("/pt"); }
   const { f, e } = clearFlash(req);
-  const extra = { payments: req.isStaff ? [] : D.payments(req.gymId, m.id), attendance: D.attendanceDates(req.gymId, m.id), isStaff: req.isStaff };
+  const extra = { payments: req.isStaff ? [] : D.payments(req.gymId, m.id), attendance: D.attendanceDates(req.gymId, m.id), isStaff: req.isStaff, products: req.isStaff ? [] : D.products(req.gymId) };
   page(req, res, req.isStaff ? "pt" : "members", m.name, V.memberDetailBody(m, D.ptSessions(req.gymId, m.id), D, extra), { flash: f, flashErr: e });
 });
 // 결제 등록/삭제
@@ -314,9 +314,23 @@ app.get("/reports", auth, notStaff, (req, res) => {
 // ── 접수함 ──
 app.get("/inbox", auth, notStaff, (req, res) => {
   const { f, e } = clearFlash(req);
-  page(req, res, "inbox", "접수함", V.inboxBody(D.leads(req.gymId), D.requests(req.gymId)), { flash: f, flashErr: e });
+  page(req, res, "inbox", "접수함", V.inboxBody(D.leads(req.gymId), D.requests(req.gymId), { products: D.products(req.gymId), D }), { flash: f, flashErr: e });
 });
 app.post("/inbox/lead/:id", auth, notStaff, (req, res) => { D.setLeadStatus(req.gymId, Number(req.params.id), req.body.status); flash(req, "상태를 변경했습니다."); res.redirect("/inbox"); });
+// 리드 → 회원 전환
+app.post("/inbox/lead/:id/convert", auth, notStaff, (req, res) => {
+  const r = D.convertLead(req.gymId, Number(req.params.id), { product_id: req.body.product_id, method: req.body.method });
+  if (r.error) { flash(req, r.error, true); return res.redirect("/inbox"); }
+  flash(req, `${r.member.name}님을 회원으로 ${r.existed ? "업데이트" : "등록"}했습니다.`);
+  res.redirect("/members/" + r.member.id);
+});
+// PT 예약 요청 → 세션 확정
+app.post("/inbox/request/:id/confirm", auth, (req, res) => {
+  const b = req.body;
+  const r = D.confirmReservation(req.gymId, Number(req.params.id), { date: b.date, time: b.time, trainer: b.trainer });
+  flash(req, r.error || `${r.member.name}님 PT 예약을 확정했습니다. (${b.date || ""} ${b.time || ""})`, !!r.error);
+  res.redirect("/inbox");
+});
 app.post("/inbox/request/:id", auth, notStaff, (req, res) => { D.setRequestStatus(req.gymId, Number(req.params.id), req.body.status); flash(req, "상태를 변경했습니다."); res.redirect("/inbox"); });
 
 // ── 매장 설정 (운영자 전용) ──
@@ -327,6 +341,25 @@ app.post("/settings", auth, adminOnly, (req, res) => {
   if (b.gym_name) { const g = D.getGym(gid); if (g) { g.name = b.gym_name; D.save(); } }
   flash(req, "매장 설정이 저장되었습니다. (챗봇에 반영)");
   res.redirect("/settings");
+});
+
+// ── 회원권 상품 마스터 (사장님) ──
+app.post("/products", auth, notStaff, (req, res) => {
+  const b = req.body;
+  const r = D.addProduct(req.gymId, { name: b.name, months: b.months, price: b.price, pt_count: b.pt_count });
+  flash(req, r.error || "상품이 추가되었습니다.", !!r.error);
+  res.redirect("/products");
+});
+app.get("/products", auth, notStaff, (req, res) => {
+  const { f, e } = clearFlash(req);
+  page(req, res, "products", "회원권 상품", V.productsBody(D.products(req.gymId)), { flash: f, flashErr: e });
+});
+app.post("/products/:id/delete", auth, notStaff, (req, res) => { D.deleteProduct(req.gymId, Number(req.params.id)); flash(req, "상품을 삭제했습니다."); res.redirect("/products"); });
+// 회원에게 상품 적용 (만료 연장 + PT 충전 + 결제 기록)
+app.post("/members/:id/apply-product", auth, notStaff, (req, res) => {
+  const r = D.applyProduct(req.gymId, Number(req.params.id), req.body.product_id, { method: req.body.method });
+  flash(req, r.error || `${r.product.name} 적용 완료 (만료 ${r.member.expire_date}${r.product.pt_count ? ` · PT +${r.product.pt_count}회` : ""})`, !!r.error);
+  res.redirect("/members/" + req.params.id);
 });
 
 // ── 챗봇 연결 (운영자 전용 · 멀티테넌트 온보딩) ──
