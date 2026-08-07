@@ -166,11 +166,23 @@ app.post("/members/new", auth, (req, res) => {
 });
 app.get("/members", auth, (req, res) => {
   const q = (req.query.q || "").trim();
+  const sort = req.query.sort || "name";
+  const PER = 50;
   let list = D.members(req.gymId);
   if (q) list = list.filter((m) => (m.name || "").includes(q) || (m.phone || "").includes(q.replace(/\D/g, "")));
-  list = list.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+  const cmp = {
+    name: (a, b) => (a.name || "").localeCompare(b.name || ""),
+    expire: (a, b) => String(a.expire_date || "9999").localeCompare(String(b.expire_date || "9999")),
+    ptlow: (a, b) => (a.pt_remain || 0) - (b.pt_remain || 0),
+    recent: (a, b) => String(b.join_date || "").localeCompare(String(a.join_date || "")),
+  }[sort] || ((a, b) => (a.name || "").localeCompare(b.name || ""));
+  list = list.sort(cmp);
+  const total = list.length;
+  const pages = Math.max(1, Math.ceil(total / PER));
+  const page_ = Math.min(Math.max(1, Number(req.query.page) || 1), pages);
+  const slice = list.slice((page_ - 1) * PER, page_ * PER);
   const { f, e } = clearFlash(req);
-  page(req, res, "members", "회원 관리", V.membersBody(list, D, q, D.lastBackupInfo()), { flash: f, flashErr: e });
+  page(req, res, "members", "회원 관리", V.membersBody(slice, D, q, D.lastBackupInfo(), { total, page: page_, pages, sort, per: PER }), { flash: f, flashErr: e });
 });
 app.post("/members/upload", auth, upload.single("csv"), (req, res) => {
   if (!req.file) { flash(req, "파일이 없습니다.", true); return res.redirect("/members"); }
@@ -184,7 +196,44 @@ app.post("/members/upload", auth, upload.single("csv"), (req, res) => {
 app.get("/members/:id", auth, (req, res) => {
   const m = D.member(req.gymId, Number(req.params.id));
   if (!m) return res.redirect("/members");
-  page(req, res, "members", m.name, V.memberDetailBody(m, D.ptSessions(req.gymId, m.id), D));
+  const { f, e } = clearFlash(req);
+  const extra = { payments: D.payments(req.gymId, m.id), attendance: D.attendanceDates(req.gymId, m.id) };
+  page(req, res, "members", m.name, V.memberDetailBody(m, D.ptSessions(req.gymId, m.id), D, extra), { flash: f, flashErr: e });
+});
+// 결제 등록/삭제
+app.post("/members/:id/payment", auth, (req, res) => {
+  const b = req.body;
+  const r = D.addPayment(req.gymId, Number(req.params.id), { item: b.item, amount: b.amount, paid_at: b.paid_at, method: b.method });
+  flash(req, r.error || "결제가 등록되었습니다.", !!r.error);
+  res.redirect("/members/" + req.params.id);
+});
+app.post("/members/:id/payment/:pid/delete", auth, (req, res) => {
+  D.deletePayment(req.gymId, Number(req.params.pid));
+  flash(req, "결제 기록을 삭제했습니다.");
+  res.redirect("/members/" + req.params.id);
+});
+// 출석 수기 추가/삭제
+app.post("/members/:id/attendance", auth, (req, res) => {
+  const r = D.addAttendance(req.gymId, Number(req.params.id), req.body.date);
+  flash(req, r.error || "출석을 기록했습니다.", !!r.error);
+  res.redirect("/members/" + req.params.id);
+});
+app.post("/members/:id/attendance/delete", auth, (req, res) => {
+  D.removeAttendance(req.gymId, Number(req.params.id), req.body.date);
+  flash(req, "출석 기록을 삭제했습니다.");
+  res.redirect("/members/" + req.params.id);
+});
+// PT 세션 수정/삭제
+app.post("/members/:id/session/:sid", auth, (req, res) => {
+  const b = req.body;
+  const r = D.updatePtSession(req.gymId, Number(req.params.sid), { trainer: b.trainer, date: b.date, time: b.time, status: b.status, feedback: b.feedback, homework: b.homework });
+  flash(req, r.error || "세션이 수정되었습니다.", !!r.error);
+  res.redirect("/members/" + req.params.id);
+});
+app.post("/members/:id/session/:sid/delete", auth, (req, res) => {
+  const r = D.deletePtSession(req.gymId, Number(req.params.sid));
+  flash(req, r.error || "세션을 삭제했습니다. (완료 세션이면 PT 잔여가 복구됩니다)", !!r.error);
+  res.redirect("/members/" + req.params.id);
 });
 app.post("/members/:id", auth, (req, res) => {
   const b = req.body;

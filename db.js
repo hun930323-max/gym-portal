@@ -216,6 +216,49 @@ function addPtSession(gymId, memberId, { trainer, date, time, status, feedback, 
   return s;
 }
 function ptSessions(gymId, memberId) { return byGym("pt_sessions", gymId).filter((s) => s.member_id === memberId).sort((a, b) => (b.date + b.time).localeCompare(a.date + a.time)); }
+// PT 세션 수정 (완료 상태 전환 시 잔여 보정) · 삭제
+function updatePtSession(gymId, sessionId, fields) {
+  const s = db.pt_sessions.find((x) => x.gym_id === gymId && x.id === sessionId);
+  if (!s) return { error: "세션을 찾을 수 없습니다." };
+  const wasDone = s.status === "완료";
+  const willDone = fields.status === "완료";
+  Object.assign(s, { trainer: fields.trainer, date: fields.date, time: fields.time, status: fields.status, feedback: fields.feedback || "", homework: fields.homework || "" });
+  const m = member(gymId, s.member_id);
+  if (m) { // 완료↔미완료 전환 시 잔여 보정
+    if (!wasDone && willDone && m.pt_remain > 0) m.pt_remain -= 1;
+    if (wasDone && !willDone) m.pt_remain = (m.pt_remain || 0) + 1;
+  }
+  save();
+  return { ok: true, session: s };
+}
+function deletePtSession(gymId, sessionId) {
+  const s = db.pt_sessions.find((x) => x.gym_id === gymId && x.id === sessionId);
+  if (!s) return { error: "세션을 찾을 수 없습니다." };
+  if (s.status === "완료") { const m = member(gymId, s.member_id); if (m) m.pt_remain = (m.pt_remain || 0) + 1; } // 잔여 복구
+  db.pt_sessions = db.pt_sessions.filter((x) => !(x.gym_id === gymId && x.id === sessionId));
+  save();
+  return { ok: true };
+}
+
+// ── 결제/매출 ──
+function payments(gymId, memberId) { const list = byGym("payments", gymId); return (memberId ? list.filter((p) => p.member_id === memberId) : list).sort((a, b) => String(b.paid_at).localeCompare(String(a.paid_at))); }
+function addPayment(gymId, memberId, { item, amount, paid_at, method }) {
+  const amt = Number(String(amount).replace(/[^\d.-]/g, "")) || 0;
+  if (amt <= 0) return { error: "금액을 올바르게 입력해 주세요." };
+  const p = { id: nextId(), gym_id: gymId, member_id: memberId || null, item: item || "", amount: amt, paid_at: paid_at || todayPlus(0), method: method || "" };
+  db.payments.push(p); save();
+  return { ok: true, payment: p };
+}
+function deletePayment(gymId, paymentId) { const before = db.payments.length; db.payments = db.payments.filter((p) => !(p.gym_id === gymId && p.id === paymentId)); save(); return { ok: db.payments.length < before }; }
+
+// ── 출석 수기 관리 ──
+function addAttendance(gymId, memberId, date) {
+  const d = date || todayPlus(0);
+  if (db.attendance.some((a) => a.gym_id === gymId && a.member_id === memberId && a.date === d)) return { error: "이미 해당 날짜에 출석 기록이 있습니다." };
+  db.attendance.push({ id: nextId(), gym_id: gymId, member_id: memberId, date: d }); save();
+  return { ok: true };
+}
+function removeAttendance(gymId, memberId, date) { const before = db.attendance.length; db.attendance = db.attendance.filter((a) => !(a.gym_id === gymId && a.member_id === memberId && a.date === date)); save(); return { ok: db.attendance.length < before }; }
 
 function setLeadStatus(gymId, id, status) { const l = db.leads.find((x) => x.gym_id === gymId && x.id === id); if (l) { l.status = status; save(); } }
 function setRequestStatus(gymId, id, status) { const r = db.requests.find((x) => x.gym_id === gymId && x.id === id); if (r) { r.status = status; save(); } }
@@ -391,7 +434,8 @@ module.exports = {
   checkinMember, attendanceDates, memberSessions,
   getOwnerByEmail, createOwnerWithGym, verifyOwner, getOwner, getGym, allGyms, changePassword,
   members, member, ptMembers, leads, requests, sendLogs, getSettings, setSettings,
-  upsertMember, updateMember, deleteMember, addPtSession, ptSessions,
+  upsertMember, updateMember, deleteMember, addPtSession, ptSessions, updatePtSession, deletePtSession,
+  payments, addPayment, deletePayment, addAttendance, removeAttendance,
   setLeadStatus, setRequestStatus, addSendLog, notifyMember, runAutoSends, metrics,
   unsubToken, verifyUnsubToken, setUnsubscribed,
 };

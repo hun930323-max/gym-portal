@@ -176,9 +176,10 @@ function memberRow(m, D) {
 <td>${esc(m.expire_date || "-")} ${exp}</td><td>${pt}</td><td>${m.locker ? "이용" : "-"}</td>
 <td><a class="btn sm gray" href="/members/${m.id}">상세</a></td></tr>`;
 }
-function membersBody(list, D, q, backup) {
+function membersBody(list, D, q, backup, pg) {
   const rows = list.map((m) => memberRow(m, D)).join("") || `<tr><td colspan="7" class="muted">회원이 없습니다. CSV를 업로드하거나 직접 추가하세요.</td></tr>`;
-  return `<h1>회원 관리</h1><div class="sub">총 ${list.length}명 · CSV 업로드로 한 번에 등록</div>
+  const total = pg ? pg.total : list.length;
+  return `<h1>회원 관리</h1><div class="sub">총 ${total}명${pg && pg.pages > 1 ? ` · ${pg.page}/${pg.pages} 페이지` : ""} · CSV 업로드로 한 번에 등록</div>
 <div class="panel"><h2>💾 데이터 내보내기 · 백업</h2>
 <p class="muted" style="margin-bottom:12px">내 회원 데이터를 안전하게 지키세요. 정기적으로 내려받아 보관하시길 권장합니다.${backup && backup.count ? ` (서버 자동 백업 ${backup.count}개 보관${backup.latest ? `, 최근 ${esc(backup.latest)}` : ""})` : ""}</p>
 <a class="btn gray" href="/members/export.csv">📥 회원 CSV 내려받기</a>
@@ -193,14 +194,35 @@ function membersBody(list, D, q, backup) {
 </form></div>
 <div class="panel"><h2>회원 목록</h2>
 <form method="GET" action="/members" style="margin-bottom:12px;display:flex;gap:8px;max-width:420px">
-<input name="q" placeholder="이름·전화 검색" value="${esc(q || "")}"><button class="btn sm">검색</button>
+<input name="q" placeholder="이름·전화 검색" value="${esc(q || "")}">
+<select name="sort" style="max-width:150px">${[["name", "이름순"], ["expire", "만료임박순"], ["ptlow", "PT잔여 적은순"], ["recent", "최근가입순"]].map(([v, l]) => `<option value="${v}" ${pg && pg.sort === v ? "selected" : ""}>${l}</option>`).join("")}</select>
+<button class="btn sm">검색</button>
 <a class="btn sm gray" href="/members/new">+ 직접 추가</a></form>
 <table><thead><tr><th>이름</th><th>전화</th><th>회원권</th><th>만료</th><th>PT</th><th>락커</th><th></th></tr></thead>
-<tbody>${rows}</tbody></table></div>`;
+<tbody>${rows}</tbody></table>
+${pg && pg.pages > 1 ? `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:14px;align-items:center">
+${pg.page > 1 ? `<a class="btn sm gray" href="/members?page=${pg.page - 1}&sort=${esc(pg.sort)}&q=${encodeURIComponent(q || "")}">← 이전</a>` : ""}
+<span class="muted">${pg.page} / ${pg.pages} 페이지 (50명씩)</span>
+${pg.page < pg.pages ? `<a class="btn sm gray" href="/members?page=${pg.page + 1}&sort=${esc(pg.sort)}&q=${encodeURIComponent(q || "")}">다음 →</a>` : ""}
+</div>` : ""}
+</div>`;
 }
-function memberDetailBody(m, sessions, D) {
-  const sRows = sessions.map((s) => `<tr><td>${esc(s.date)} ${esc(s.time || "")}</td><td>${esc(s.trainer || "")}</td><td><span class="badge ${s.status === "완료" ? "b-green" : s.status === "노쇼" ? "b-red" : "b-gray"}">${esc(s.status)}</span></td><td>${esc(s.feedback || "-")}</td><td>${esc(s.homework || "-")}</td></tr>`).join("") || `<tr><td colspan="5" class="muted">기록 없음</td></tr>`;
-  const f = (name, val, type) => `<div><label>${name}</label><input name="${name === "이름" ? "name" : ""}" ></div>`;
+function memberDetailBody(m, sessions, D, extra) {
+  extra = extra || {};
+  const pays = extra.payments || [], atts = extra.attendance || [];
+  // PT 세션: 각 행을 수정 가능한 폼으로
+  const sRows = sessions.map((s) => `<tr>
+<td><form method="POST" action="/members/${m.id}/session/${s.id}" id="sf${s.id}" style="display:flex;gap:4px"><input name="date" value="${esc(s.date)}" style="width:105px"><input name="time" value="${esc(s.time || "")}" style="width:64px"></form></td>
+<td><input form="sf${s.id}" name="trainer" value="${esc(s.trainer || "")}" style="width:80px"></td>
+<td><select form="sf${s.id}" name="status" style="width:78px">${["완료", "예약", "노쇼", "취소"].map((o) => `<option ${s.status === o ? "selected" : ""}>${o}</option>`).join("")}</select></td>
+<td><input form="sf${s.id}" name="feedback" value="${esc(s.feedback || "")}" placeholder="피드백"></td>
+<td><input form="sf${s.id}" name="homework" value="${esc(s.homework || "")}" placeholder="숙제"></td>
+<td style="white-space:nowrap"><button form="sf${s.id}" class="btn sm">저장</button>
+<form method="POST" action="/members/${m.id}/session/${s.id}/delete" style="display:inline" onsubmit="return confirm('이 세션을 삭제할까요? 완료 세션이면 PT 잔여가 복구됩니다.')"><button class="btn sm gray">삭제</button></form></td>
+</tr>`).join("") || `<tr><td colspan="6" class="muted">기록 없음</td></tr>`;
+  const payRows = pays.map((p) => `<tr><td>${esc(p.paid_at)}</td><td>${esc(p.item || "-")}</td><td><b>${won(p.amount)}</b></td><td>${esc(p.method || "-")}</td><td><form method="POST" action="/members/${m.id}/payment/${p.id}/delete" onsubmit="return confirm('삭제할까요?')"><button class="btn sm gray">삭제</button></form></td></tr>`).join("") || `<tr><td colspan="5" class="muted">결제 기록이 없습니다.</td></tr>`;
+  const payTotal = pays.reduce((s, p) => s + (Number(p.amount) || 0), 0);
+  const attRows = atts.slice(-14).reverse().map((d) => `<tr><td>${esc(d)}</td><td><form method="POST" action="/members/${m.id}/attendance/delete" onsubmit="return confirm('출석 기록을 삭제할까요?')"><input type="hidden" name="date" value="${esc(d)}"><button class="btn sm gray">삭제</button></form></td></tr>`).join("") || `<tr><td colspan="2" class="muted">출석 기록이 없습니다.</td></tr>`;
   return `<h1>${esc(m.name)} <span class="muted" style="font-size:14px">${esc(maskPhone(m.phone))}</span></h1>
 <div class="sub"><a href="/members">← 회원 목록</a></div>
 <div class="panel"><h2>회원 정보 수정</h2>
@@ -226,8 +248,27 @@ ${m.unsubscribed ? `<div style="margin-top:8px"><span class="badge b-red">수신
 </form>
 <form method="POST" action="/members/${m.id}/delete" style="display:inline" onsubmit="return confirm('삭제할까요?')"><button class="btn gray sm" style="margin-top:10px">회원 삭제</button></form>
 </div>
-<div class="panel"><h2>PT 세션 기록</h2>
-<table><thead><tr><th>일시</th><th>강사</th><th>상태</th><th>피드백</th><th>숙제</th></tr></thead><tbody>${sRows}</tbody></table>
+<div class="panel"><h2>💳 결제 · 매출</h2>
+<p class="muted" style="margin-bottom:10px">누적 ${won(payTotal)} · ${pays.length}건 — 여기 입력한 금액이 대시보드·리포트 매출에 반영됩니다.</p>
+<table><thead><tr><th>결제일</th><th>항목</th><th>금액</th><th>수단</th><th></th></tr></thead><tbody>${payRows}</tbody></table>
+<form method="POST" action="/members/${m.id}/payment" style="margin-top:14px">
+<div class="row">
+<div><label>결제일</label><input name="paid_at" value="${esc(D.todayPlus(0))}"></div>
+<div><label>항목</label><input name="item" placeholder="예: 헬스 3개월 / PT 10회"></div>
+<div><label>금액(원)</label><input name="amount" placeholder="예: 259000"></div>
+<div><label>수단</label><input name="method" placeholder="카드/현금/이체"></div>
+</div>
+<button class="btn sm" style="margin-top:12px">결제 등록</button></form></div>
+
+<div class="panel"><h2>📅 출석 관리</h2>
+<p class="muted" style="margin-bottom:10px">누적 ${atts.length}회 — 챗봇 체크인 외에 수기로 추가·정정할 수 있어요. (최근 14건 표시)</p>
+<table><thead><tr><th>날짜</th><th></th></tr></thead><tbody>${attRows}</tbody></table>
+<form method="POST" action="/members/${m.id}/attendance" style="margin-top:14px;display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
+<div style="flex:1;min-width:160px"><label>출석일 추가</label><input name="date" value="${esc(D.todayPlus(0))}"></div>
+<button class="btn sm">출석 추가</button></form></div>
+
+<div class="panel"><h2>PT 세션 기록 <span class="muted" style="font-size:12px;font-weight:400">— 각 행을 바로 수정·삭제할 수 있어요</span></h2>
+<table><thead><tr><th>일시</th><th>강사</th><th>상태</th><th>피드백</th><th>숙제</th><th></th></tr></thead><tbody>${sRows}</tbody></table>
 <form method="POST" action="/pt/${m.id}/session" style="margin-top:14px">
 <div class="row">
 <div><label>날짜</label><input name="date" value="${esc(D.todayPlus(0))}"></div>
