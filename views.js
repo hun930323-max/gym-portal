@@ -89,9 +89,12 @@ function layout({ title, owner, gym, active, body, flash, flashErr }) {
     ["/connect", "챗봇 연결", "connect"],
     ["/sends", "발송 관리", "sends"],
   ];
-  const items = ((owner && owner.is_admin) ? baseNav.concat(adminNav) : baseNav).concat([["/account", "내 계정", "account"]]);
+  const isStaff = owner && owner.role === "staff";
+  const staffNav = [["/pt", "내 PT 회원", "pt"]];
+  const items = (isStaff ? staffNav : ((owner && owner.is_admin) ? baseNav.concat(adminNav) : baseNav)).concat([["/account", "내 계정", "account"]]);
   const nav = `<div class="navlinks">` + items.map(([href, label, key]) => `<a href="${href}" class="${active === key ? "active" : ""}">${label}</a>`).join("") + `</div>`
-    + ((owner && owner.is_admin) ? `<div style="margin:8px 16px 0;font-size:11px;color:#7c8a99">운영자 전용 포함</div>` : "");
+    + ((owner && owner.is_admin) ? `<div style="margin:8px 16px 0;font-size:11px;color:#7c8a99">운영자 전용 포함</div>` : "")
+    + (isStaff ? `<div style="margin:8px 16px 0;font-size:11px;color:#7c8a99">트레이너 계정 · 담당 회원만</div>` : "");
   return `<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)} · 사장님 포털</title><style>${CSS}</style></head>
 <body><div class="layout">
 <nav class="side">
@@ -210,6 +213,7 @@ ${pg.page < pg.pages ? `<a class="btn sm gray" href="/members?page=${pg.page + 1
 function memberDetailBody(m, sessions, D, extra) {
   extra = extra || {};
   const pays = extra.payments || [], atts = extra.attendance || [];
+  const isStaffView = !!extra.isStaff;
   // PT 세션: 각 행을 수정 가능한 폼으로
   const sRows = sessions.map((s) => `<tr>
 <td><form method="POST" action="/members/${m.id}/session/${s.id}" id="sf${s.id}" style="display:flex;gap:4px"><input name="date" value="${esc(s.date)}" style="width:105px"><input name="time" value="${esc(s.time || "")}" style="width:64px"></form></td>
@@ -225,7 +229,7 @@ function memberDetailBody(m, sessions, D, extra) {
   const attRows = atts.slice(-14).reverse().map((d) => `<tr><td>${esc(d)}</td><td><form method="POST" action="/members/${m.id}/attendance/delete" onsubmit="return confirm('출석 기록을 삭제할까요?')"><input type="hidden" name="date" value="${esc(d)}"><button class="btn sm gray">삭제</button></form></td></tr>`).join("") || `<tr><td colspan="2" class="muted">출석 기록이 없습니다.</td></tr>`;
   return `<h1>${esc(m.name)} <span class="muted" style="font-size:14px">${esc(maskPhone(m.phone))}</span></h1>
 <div class="sub"><a href="/members">← 회원 목록</a></div>
-<div class="panel"><h2>회원 정보 수정</h2>
+${isStaffView ? "" : `<div class="panel"><h2>회원 정보 수정</h2>
 <form method="POST" action="/members/${m.id}">
 <div class="row">
 <div><label>이름</label><input name="name" value="${esc(m.name)}"></div>
@@ -247,8 +251,8 @@ ${m.unsubscribed ? `<div style="margin-top:8px"><span class="badge b-red">수신
 <button class="btn" style="margin-top:16px">저장</button>
 </form>
 <form method="POST" action="/members/${m.id}/delete" style="display:inline" onsubmit="return confirm('삭제할까요?')"><button class="btn gray sm" style="margin-top:10px">회원 삭제</button></form>
-</div>
-<div class="panel"><h2>💳 결제 · 매출</h2>
+</div>`}
+${isStaffView ? "" : `<div class="panel"><h2>💳 결제 · 매출</h2>
 <p class="muted" style="margin-bottom:10px">누적 ${won(payTotal)} · ${pays.length}건 — 여기 입력한 금액이 대시보드·리포트 매출에 반영됩니다.</p>
 <table><thead><tr><th>결제일</th><th>항목</th><th>금액</th><th>수단</th><th></th></tr></thead><tbody>${payRows}</tbody></table>
 <form method="POST" action="/members/${m.id}/payment" style="margin-top:14px">
@@ -258,7 +262,7 @@ ${m.unsubscribed ? `<div style="margin-top:8px"><span class="badge b-red">수신
 <div><label>금액(원)</label><input name="amount" placeholder="예: 259000"></div>
 <div><label>수단</label><input name="method" placeholder="카드/현금/이체"></div>
 </div>
-<button class="btn sm" style="margin-top:12px">결제 등록</button></form></div>
+<button class="btn sm" style="margin-top:12px">결제 등록</button></form></div>`}
 
 <div class="panel"><h2>📅 출석 관리</h2>
 <p class="muted" style="margin-bottom:10px">누적 ${atts.length}회 — 챗봇 체크인 외에 수기로 추가·정정할 수 있어요. (최근 14건 표시)</p>
@@ -282,15 +286,16 @@ ${m.unsubscribed ? `<div style="margin-top:8px"><span class="badge b-red">수신
 <p class="muted" style="margin-top:8px"><i>· 상태를 '완료'로 저장하면 잔여 -1, 그리고 회원에게 피드백·숙제 알림톡이 자동 발송됩니다.</i></p>
 </form></div>`;
 }
-function ptBody(list, D) {
+function ptBody(list, D, ctx) {
   const rows = list.map((m) => {
     const low = (m.pt_remain || 0) <= 2;
     return `<tr><td><b>${esc(m.name)}</b></td><td>${esc(maskPhone(m.phone))}</td><td>${esc(m.pt_trainer || "미지정")}</td>
     <td>${m.pt_remain || 0}/${m.pt_total || 0}회 ${low ? `<span class="badge b-red">소진임박</span>` : ""}</td>
     <td>${esc(m.pt_expire || "-")}</td><td><a class="btn sm gray" href="/members/${m.id}">관리</a></td></tr>`;
-  }).join("") || `<tr><td colspan="6" class="muted">PT 이용권 회원이 없습니다.</td></tr>`;
-  return `<h1>PT 회원 관리</h1><div class="sub">PT 이용권 보유 ${list.length}명 · 잔여·강사·세션 관리</div>
-<div class="panel"><h2>PT 회원 목록</h2>
+  }).join("") || `<tr><td colspan="6" class="muted">${ctx && ctx.isStaff ? "담당 PT 회원이 없습니다. (회원의 'PT담당강사'가 내 담당명과 같아야 표시됩니다)" : "PT 이용권 회원이 없습니다."}</td></tr>`;
+  const staffMode = !!(ctx && ctx.isStaff);
+  return `<h1>${staffMode ? "내 PT 회원" : "PT 회원 관리"}</h1><div class="sub">${staffMode ? `담당 ${esc(ctx.trainerName || "")} · ${list.length}명 — 회원을 눌러 세션 피드백·숙제를 입력하세요` : `PT 이용권 보유 ${list.length}명 · 잔여·강사·세션 관리`}</div>
+<div class="panel"><h2>${staffMode ? "담당 회원 목록" : "PT 회원 목록"}</h2>
 <table><thead><tr><th>이름</th><th>전화</th><th>담당강사</th><th>이용권</th><th>유효기간</th><th></th></tr></thead>
 <tbody>${rows}</tbody></table></div>`;
 }
@@ -420,15 +425,17 @@ ${status}</div>
 </div>`;
 }
 function memberNewBody(D) {
-  return `<h1>회원 직접 추가</h1><div class="sub"><a href="/members">← 회원 목록</a></div>
+  return `<h1>회원 직접 추가</h1><div class="sub"><a href="${isStaffView ? "/pt" : "/members"}">← ${isStaffView ? "내 PT 회원" : "회원 목록"}</a></div>
 <div class="panel"><form method="POST" action="/members/new">
 <div class="row"><div><label>전화번호 *</label><input name="phone" required></div><div><label>이름</label><input name="name"></div><div><label>회원권 종류</label><input name="membership_type"></div></div>
 <div class="row"><div><label>만료일</label><input name="expire_date" value="${esc(D.todayPlus(90))}"></div><div><label>가입일</label><input name="join_date" value="${esc(D.todayPlus(0))}"></div><div><label>PT 총/잔여</label><input name="pt_total" placeholder="0"></div></div>
 <label style="display:flex;align-items:center;gap:8px;margin-top:12px;font-weight:400"><input type="checkbox" name="marketing_consent" value="Y" style="width:auto"> 마케팅 정보 수신 동의 (광고성 알림톡 — 회원 동의 확인 후 체크)</label>
 <button class="btn" style="margin-top:14px">추가</button></form></div>`;
 }
-function accountBody(owner, gym) {
-  return `<h1>내 계정</h1><div class="sub">${esc(owner ? owner.name : "")} · ${esc(owner ? owner.email : "")}${owner && owner.is_admin ? ` <span class="badge b-gold">운영자</span>` : ` · ${esc(gym ? gym.name : "")}`}</div>
+function accountBody(owner, gym, staff) {
+  const isStaff = owner && owner.role === "staff";
+  const roleBadge = owner && owner.is_admin ? ` <span class="badge b-gold">운영자</span>` : isStaff ? ` <span class="badge b-green">트레이너</span>` : "";
+  return `<h1>내 계정</h1><div class="sub">${esc(owner ? owner.name : "")} · ${esc(owner ? owner.email : "")}${roleBadge}${owner && owner.is_admin ? "" : ` · ${esc(gym ? gym.name : "")}`}</div>
 <div class="panel"><h2>비밀번호 변경</h2>
 <form method="POST" action="/account/password">
 <label>현재 비밀번호</label><input type="password" name="current_password" required autocomplete="current-password">
@@ -441,10 +448,25 @@ function accountBody(owner, gym) {
 <table><tbody>
 <tr><th>이름</th><td>${esc(owner ? owner.name : "")}</td></tr>
 <tr><th>이메일</th><td>${esc(owner ? owner.email : "")}</td></tr>
-<tr><th>권한</th><td>${owner && owner.is_admin ? "운영자 (매장설정·챗봇연결·발송관리 접근)" : "사장님 (내 매장 관리)"}</td></tr>
+<tr><th>권한</th><td>${owner && owner.is_admin ? "운영자 (매장설정·챗봇연결·발송관리 접근)" : isStaff ? `트레이너 (담당 PT 회원만 · 담당명 "${esc(owner.trainer_name || owner.name)}")` : "사장님 (내 매장 관리)"}</td></tr>
 ${owner && !owner.is_admin ? `<tr><th>매장</th><td>${esc(gym ? gym.name : "")}</td></tr>` : ""}
 </tbody></table>
-<p class="muted" style="margin-top:10px"><a href="/privacy">개인정보 처리방침</a></p></div>`;
+<p class="muted" style="margin-top:10px"><a href="/privacy">개인정보 처리방침</a></p></div>
+${staff ? `<div class="panel"><h2>🏋️ 트레이너 계정 관리</h2>
+<p class="muted" style="margin-bottom:12px">트레이너는 <b>본인이 담당한 PT 회원만</b> 조회하고 세션 피드백·숙제를 입력할 수 있어요. (회원 등록·매출·리포트 접근 불가)</p>
+<table><thead><tr><th>이름</th><th>이메일</th><th>담당명(회원의 PT담당강사와 일치)</th><th></th></tr></thead><tbody>
+${staff.map((s) => `<tr><td>${esc(s.name)}</td><td>${esc(s.email)}</td><td><span class="badge b-gray">${esc(s.trainer_name || s.name)}</span></td><td><form method="POST" action="/account/staff/${s.id}/delete" onsubmit="return confirm('이 트레이너 계정을 삭제할까요?')"><button class="btn sm gray">삭제</button></form></td></tr>`).join("") || `<tr><td colspan="4" class="muted">등록된 트레이너 계정이 없습니다.</td></tr>`}
+</tbody></table>
+<form method="POST" action="/account/staff" style="margin-top:14px">
+<div class="row">
+<div><label>이름</label><input name="name" placeholder="예: 김코치" required></div>
+<div><label>담당명 (비우면 이름과 동일)</label><input name="trainer_name" placeholder="회원의 'PT담당강사'와 같게"></div>
+</div>
+<div class="row">
+<div><label>이메일 (로그인 ID)</label><input name="email" type="email" placeholder="trainer@gym.com" required></div>
+<div><label>비밀번호 (8자 이상)</label><input name="password" type="password" minlength="8" required></div>
+</div>
+<button class="btn" style="margin-top:14px">트레이너 계정 만들기</button></form></div>` : ""}`;
 }
 function publicShell(title, body) {
   return `<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)}</title><style>body{font-family:system-ui,-apple-system,sans-serif;max-width:760px;margin:0 auto;padding:32px 20px;color:#1a2330;line-height:1.7}h1{font-size:22px}h2{font-size:17px;margin-top:24px}a{color:#B26B00}</style></head><body>${body}</body></html>`;

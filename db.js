@@ -148,6 +148,34 @@ function verifyOwner(email, password) {
   return bcrypt.compareSync(password, o.password_hash) ? o : null;
 }
 function getOwner(id) { return db.owners.find((o) => o.id === id); }
+
+// ── 스태프(트레이너) 계정 ── 사장님이 발급, 담당 PT 회원만 조회·세션 입력 가능
+function staffList(gymId) { return db.owners.filter((o) => o.gym_id === gymId && o.role === "staff"); }
+function createStaff(gymId, { email, password, name, trainer_name }) {
+  email = String(email || "").toLowerCase().trim();
+  if (!email || !password || !name) return { error: "이름·이메일·비밀번호를 모두 입력해 주세요." };
+  if (String(password).length < 8) return { error: "비밀번호는 8자 이상이어야 합니다." };
+  if (getOwnerByEmail(email)) return { error: "이미 사용 중인 이메일입니다." };
+  const s = { id: nextId(), gym_id: gymId, email, password_hash: bcrypt.hashSync(String(password), 12), name, role: "staff", is_admin: false, trainer_name: (trainer_name || name).trim(), created_at: todayPlus(0) };
+  db.owners.push(s); save();
+  return { ok: true, staff: s };
+}
+function deleteStaff(gymId, staffId) {
+  const s = db.owners.find((o) => o.id === staffId && o.gym_id === gymId && o.role === "staff");
+  if (!s) return { error: "스태프를 찾을 수 없습니다." };
+  db.owners = db.owners.filter((o) => o.id !== staffId);
+  save(); return { ok: true };
+}
+// 스태프가 볼 수 있는 회원: 담당 트레이너명이 일치하는 PT 회원만
+function staffMembers(gymId, trainerName) {
+  const t = String(trainerName || "").trim();
+  return members(gymId).filter((m) => (m.pt_total || 0) > 0 && String(m.pt_trainer || "").trim() === t);
+}
+function canStaffAccessMember(gymId, trainerName, memberId) {
+  const m = member(gymId, memberId);
+  return !!(m && String(m.pt_trainer || "").trim() === String(trainerName || "").trim());
+}
+
 // 비밀번호 변경 (현재 비번 확인 후 교체)
 function changePassword(ownerId, currentPw, newPw) {
   const o = getOwner(ownerId);
@@ -433,6 +461,7 @@ module.exports = {
   gymByBot, getBotByGym, setBotForGym, findMemberByPhone, createLead, createRequest, memberByBotUser, linkBotUser,
   checkinMember, attendanceDates, memberSessions,
   getOwnerByEmail, createOwnerWithGym, verifyOwner, getOwner, getGym, allGyms, changePassword,
+  staffList, createStaff, deleteStaff, staffMembers, canStaffAccessMember,
   members, member, ptMembers, leads, requests, sendLogs, getSettings, setSettings,
   upsertMember, updateMember, deleteMember, addPtSession, ptSessions, updatePtSession, deletePtSession,
   payments, addPayment, deletePayment, addAttendance, removeAttendance,

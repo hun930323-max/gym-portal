@@ -50,6 +50,13 @@ function auth(req, res, next) {
   req.gym = D.getGym(owner.gym_id);
   req.gymId = owner.gym_id;
   req.isAdmin = !!owner.is_admin;
+  req.isStaff = owner.role === "staff";
+  req.trainerName = owner.trainer_name || owner.name;
+  next();
+}
+// 스태프(트레이너) 차단 — 사장님/운영자 전용 기능
+function notStaff(req, res, next) {
+  if (req.isStaff) { flash(req, "트레이너 계정은 담당 PT 회원 관리만 가능합니다.", true); return res.redirect("/pt"); }
   next();
 }
 // 운영자(우리) 전용 라우트 가드 — 사장님 접근 차단
@@ -129,7 +136,19 @@ app.get("/u/:token", (req, res) => {
 });
 
 // ── 내 계정 (비밀번호 변경) ──
-app.get("/account", auth, (req, res) => { const { f, e } = clearFlash(req); page(req, res, "account", "내 계정", V.accountBody(req.owner, req.gym), { flash: f, flashErr: e }); });
+app.get("/account", auth, (req, res) => { const { f, e } = clearFlash(req); page(req, res, "account", "내 계정", V.accountBody(req.owner, req.gym, req.isStaff ? null : D.staffList(req.gymId)), { flash: f, flashErr: e }); });
+// 스태프(트레이너) 계정 관리 — 사장님 전용
+app.post("/account/staff", auth, notStaff, (req, res) => {
+  const b = req.body;
+  const r = D.createStaff(req.gymId, { email: b.email, password: b.password, name: b.name, trainer_name: b.trainer_name });
+  flash(req, r.error || `트레이너 계정이 생성되었습니다. (${b.email})`, !!r.error);
+  res.redirect("/account");
+});
+app.post("/account/staff/:sid/delete", auth, notStaff, (req, res) => {
+  const r = D.deleteStaff(req.gymId, Number(req.params.sid));
+  flash(req, r.error || "트레이너 계정을 삭제했습니다.", !!r.error);
+  res.redirect("/account");
+});
 app.post("/account/password", auth, (req, res) => {
   const r = D.changePassword(req.owner.id, req.body.current_password, req.body.new_password);
   if (r.error) flash(req, r.error, true); else flash(req, "비밀번호가 변경되었습니다.");
@@ -137,10 +156,10 @@ app.post("/account/password", auth, (req, res) => {
 });
 
 // ── 대시보드 ──
-app.get("/dashboard", auth, (req, res) => page(req, res, "dashboard", "대시보드", V.dashboardBody(D.metrics(req.gymId, 7))));
+app.get("/dashboard", auth, notStaff, (req, res) => page(req, res, "dashboard", "대시보드", V.dashboardBody(D.metrics(req.gymId, 7))));
 
 // ── 회원 관리 ──
-app.get("/members/sample.csv", auth, (req, res) => {
+app.get("/members/sample.csv", auth, notStaff, (req, res) => {
   res.set("Content-Type", "text/csv; charset=utf-8").set("Content-Disposition", "attachment; filename=members_sample.csv")
     .send("﻿전화번호,이름,회원권종류,만료일,가입일,PT총회,PT잔여,PT담당강사,락커여부,락커만료일,메모,마케팅동의\n01012341234,김샘플,헬스 3개월,2026-12-31,2026-07-01,10,7,김코치,Y,2026-12-31,,Y\n01098765432,이샘플,헬스 1개월,2026-08-31,2026-07-10,0,0,,N,,신규상담,N\n");
 });
@@ -151,20 +170,20 @@ function membersToCsv(list) {
   const rows = list.map((m) => [m.phone, m.name, m.membership_type, m.expire_date, m.join_date, m.pt_total, m.pt_remain, m.pt_trainer, m.locker ? "Y" : "N", m.locker_expire, m.memo, m.marketing_consent ? "Y" : "N"].map(csvCell).join(","));
   return "﻿" + [head.join(","), ...rows].join("\n");
 }
-app.get("/members/export.csv", auth, (req, res) => {
+app.get("/members/export.csv", auth, notStaff, (req, res) => {
   res.set("Content-Type", "text/csv; charset=utf-8").set("Content-Disposition", `attachment; filename=members_${D.todayPlus(0)}.csv`).send(membersToCsv(D.members(req.gymId)));
 });
-app.get("/data/export.json", auth, (req, res) => {
+app.get("/data/export.json", auth, notStaff, (req, res) => {
   res.set("Content-Type", "application/json; charset=utf-8").set("Content-Disposition", `attachment; filename=backup_${D.todayPlus(0)}.json`).send(JSON.stringify(D.gymExport(req.gymId), null, 2));
 });
-app.get("/members/new", auth, (req, res) => page(req, res, "members", "회원 추가", V.memberNewBody(D)));
-app.post("/members/new", auth, (req, res) => {
+app.get("/members/new", auth, notStaff, (req, res) => page(req, res, "members", "회원 추가", V.memberNewBody(D)));
+app.post("/members/new", auth, notStaff, (req, res) => {
   const b = req.body;
   D.upsertMember(req.gymId, { phone: b.phone, name: b.name, membership_type: b.membership_type, expire_date: b.expire_date, join_date: b.join_date, pt_total: b.pt_total, pt_remain: b.pt_total, marketing_consent: b.marketing_consent ? "Y" : "" });
   flash(req, "회원이 추가되었습니다.");
   res.redirect("/members");
 });
-app.get("/members", auth, (req, res) => {
+app.get("/members", auth, notStaff, (req, res) => {
   const q = (req.query.q || "").trim();
   const sort = req.query.sort || "name";
   const PER = 50;
@@ -184,7 +203,7 @@ app.get("/members", auth, (req, res) => {
   const { f, e } = clearFlash(req);
   page(req, res, "members", "회원 관리", V.membersBody(slice, D, q, D.lastBackupInfo(), { total, page: page_, pages, sort, per: PER }), { flash: f, flashErr: e });
 });
-app.post("/members/upload", auth, upload.single("csv"), (req, res) => {
+app.post("/members/upload", auth, notStaff, upload.single("csv"), (req, res) => {
   if (!req.file) { flash(req, "파일이 없습니다.", true); return res.redirect("/members"); }
   let rows;
   try { rows = parseCSV(req.file.buffer.toString("utf8")); } catch (e) { flash(req, "CSV 파싱 오류: " + e.message, true); return res.redirect("/members"); }
@@ -195,47 +214,53 @@ app.post("/members/upload", auth, upload.single("csv"), (req, res) => {
 });
 app.get("/members/:id", auth, (req, res) => {
   const m = D.member(req.gymId, Number(req.params.id));
-  if (!m) return res.redirect("/members");
+  if (!m) return res.redirect(req.isStaff ? "/pt" : "/members");
+  // 스태프는 담당 PT 회원만 열람 가능
+  if (req.isStaff && !D.canStaffAccessMember(req.gymId, req.trainerName, m.id)) { flash(req, "담당 회원만 조회할 수 있습니다.", true); return res.redirect("/pt"); }
   const { f, e } = clearFlash(req);
-  const extra = { payments: D.payments(req.gymId, m.id), attendance: D.attendanceDates(req.gymId, m.id) };
-  page(req, res, "members", m.name, V.memberDetailBody(m, D.ptSessions(req.gymId, m.id), D, extra), { flash: f, flashErr: e });
+  const extra = { payments: req.isStaff ? [] : D.payments(req.gymId, m.id), attendance: D.attendanceDates(req.gymId, m.id), isStaff: req.isStaff };
+  page(req, res, req.isStaff ? "pt" : "members", m.name, V.memberDetailBody(m, D.ptSessions(req.gymId, m.id), D, extra), { flash: f, flashErr: e });
 });
 // 결제 등록/삭제
-app.post("/members/:id/payment", auth, (req, res) => {
+app.post("/members/:id/payment", auth, notStaff, (req, res) => {
   const b = req.body;
   const r = D.addPayment(req.gymId, Number(req.params.id), { item: b.item, amount: b.amount, paid_at: b.paid_at, method: b.method });
   flash(req, r.error || "결제가 등록되었습니다.", !!r.error);
   res.redirect("/members/" + req.params.id);
 });
-app.post("/members/:id/payment/:pid/delete", auth, (req, res) => {
+app.post("/members/:id/payment/:pid/delete", auth, notStaff, (req, res) => {
   D.deletePayment(req.gymId, Number(req.params.pid));
   flash(req, "결제 기록을 삭제했습니다.");
   res.redirect("/members/" + req.params.id);
 });
 // 출석 수기 추가/삭제
 app.post("/members/:id/attendance", auth, (req, res) => {
+  if (req.isStaff && !D.canStaffAccessMember(req.gymId, req.trainerName, Number(req.params.id))) { flash(req, "담당 회원만 관리할 수 있습니다.", true); return res.redirect("/pt"); }
   const r = D.addAttendance(req.gymId, Number(req.params.id), req.body.date);
   flash(req, r.error || "출석을 기록했습니다.", !!r.error);
   res.redirect("/members/" + req.params.id);
 });
 app.post("/members/:id/attendance/delete", auth, (req, res) => {
+  if (req.isStaff && !D.canStaffAccessMember(req.gymId, req.trainerName, Number(req.params.id))) { flash(req, "담당 회원만 관리할 수 있습니다.", true); return res.redirect("/pt"); }
   D.removeAttendance(req.gymId, Number(req.params.id), req.body.date);
   flash(req, "출석 기록을 삭제했습니다.");
   res.redirect("/members/" + req.params.id);
 });
 // PT 세션 수정/삭제
 app.post("/members/:id/session/:sid", auth, (req, res) => {
+  if (req.isStaff && !D.canStaffAccessMember(req.gymId, req.trainerName, Number(req.params.id))) { flash(req, "담당 회원만 관리할 수 있습니다.", true); return res.redirect("/pt"); }
   const b = req.body;
   const r = D.updatePtSession(req.gymId, Number(req.params.sid), { trainer: b.trainer, date: b.date, time: b.time, status: b.status, feedback: b.feedback, homework: b.homework });
   flash(req, r.error || "세션이 수정되었습니다.", !!r.error);
   res.redirect("/members/" + req.params.id);
 });
 app.post("/members/:id/session/:sid/delete", auth, (req, res) => {
+  if (req.isStaff && !D.canStaffAccessMember(req.gymId, req.trainerName, Number(req.params.id))) { flash(req, "담당 회원만 관리할 수 있습니다.", true); return res.redirect("/pt"); }
   const r = D.deletePtSession(req.gymId, Number(req.params.sid));
   flash(req, r.error || "세션을 삭제했습니다. (완료 세션이면 PT 잔여가 복구됩니다)", !!r.error);
   res.redirect("/members/" + req.params.id);
 });
-app.post("/members/:id", auth, (req, res) => {
+app.post("/members/:id", auth, notStaff, (req, res) => {
   const b = req.body;
   const consent = /^(y|on|true)/i.test(b.marketing_consent || "");
   D.updateMember(req.gymId, Number(req.params.id), {
@@ -247,16 +272,19 @@ app.post("/members/:id", auth, (req, res) => {
   flash(req, "저장되었습니다.");
   res.redirect("/members/" + req.params.id);
 });
-app.post("/members/:id/delete", auth, (req, res) => { D.deleteMember(req.gymId, Number(req.params.id)); flash(req, "삭제되었습니다."); res.redirect("/members"); });
+app.post("/members/:id/delete", auth, notStaff, (req, res) => { D.deleteMember(req.gymId, Number(req.params.id)); flash(req, "삭제되었습니다."); res.redirect("/members"); });
 
 // ── PT 회원 ──
 app.get("/pt", auth, (req, res) => {
-  const list = D.ptMembers(req.gymId).sort((a, b) => (a.pt_remain || 0) - (b.pt_remain || 0));
-  page(req, res, "pt", "PT 회원", V.ptBody(list, D));
+  const { f, e } = clearFlash(req);
+  const base = req.isStaff ? D.staffMembers(req.gymId, req.trainerName) : D.ptMembers(req.gymId);
+  const list = base.sort((a, b) => (a.pt_remain || 0) - (b.pt_remain || 0));
+  page(req, res, "pt", "PT 회원", V.ptBody(list, D, { isStaff: req.isStaff, trainerName: req.trainerName }), { flash: f, flashErr: e });
 });
 app.post("/pt/:memberId/session", auth, (req, res) => {
   const b = req.body;
   const memberId = Number(req.params.memberId);
+  if (req.isStaff && !D.canStaffAccessMember(req.gymId, req.trainerName, memberId)) { flash(req, "담당 회원만 관리할 수 있습니다.", true); return res.redirect("/pt"); }
   const date = b.date || D.todayPlus(0);
   D.addPtSession(req.gymId, memberId, { trainer: b.trainer, date, time: b.time, status: b.status, feedback: b.feedback, homework: b.homework });
   let note = "세션이 기록되었습니다.";
@@ -278,18 +306,18 @@ app.post("/pt/:memberId/session", auth, (req, res) => {
 });
 
 // ── 리포트 ──
-app.get("/reports", auth, (req, res) => {
+app.get("/reports", auth, notStaff, (req, res) => {
   const period = req.query.period === "month" ? "month" : "week";
   page(req, res, "reports", "리포트", V.reportsBody(D.metrics(req.gymId, period === "month" ? 30 : 7), period));
 });
 
 // ── 접수함 ──
-app.get("/inbox", auth, (req, res) => {
+app.get("/inbox", auth, notStaff, (req, res) => {
   const { f, e } = clearFlash(req);
   page(req, res, "inbox", "접수함", V.inboxBody(D.leads(req.gymId), D.requests(req.gymId)), { flash: f, flashErr: e });
 });
-app.post("/inbox/lead/:id", auth, (req, res) => { D.setLeadStatus(req.gymId, Number(req.params.id), req.body.status); flash(req, "상태를 변경했습니다."); res.redirect("/inbox"); });
-app.post("/inbox/request/:id", auth, (req, res) => { D.setRequestStatus(req.gymId, Number(req.params.id), req.body.status); flash(req, "상태를 변경했습니다."); res.redirect("/inbox"); });
+app.post("/inbox/lead/:id", auth, notStaff, (req, res) => { D.setLeadStatus(req.gymId, Number(req.params.id), req.body.status); flash(req, "상태를 변경했습니다."); res.redirect("/inbox"); });
+app.post("/inbox/request/:id", auth, notStaff, (req, res) => { D.setRequestStatus(req.gymId, Number(req.params.id), req.body.status); flash(req, "상태를 변경했습니다."); res.redirect("/inbox"); });
 
 // ── 매장 설정 (운영자 전용) ──
 app.get("/settings", auth, adminOnly, (req, res) => { const { f, e } = clearFlash(req); const gid = adminGid(req); page(req, res, "settings", "매장 설정", V.settingsBody(D.getSettings(gid), { gyms: D.allGyms(), gid }), { flash: f, flashErr: e }); });
