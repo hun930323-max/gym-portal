@@ -158,6 +158,7 @@ app.post("/account/password", auth, (req, res) => {
 // ── 대시보드 ──
 app.get("/dashboard", auth, notStaff, (req, res) => {
   D.expireOverdue(req.gymId); // 조회 시점에 만료 상태 최신화
+  D.purgeOrphans(req.gymId); // 삭제된 회원의 잔여 기록 정리
   page(req, res, "dashboard", "대시보드", V.dashboardBody(D.metrics(req.gymId, 7), {
     expiry: D.expiryBoard(req.gymId), upcoming: D.upcomingSessions(req.gymId, 1), noshow: D.noshowStats(req.gymId, 90),
   }));

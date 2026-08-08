@@ -233,7 +233,23 @@ function updateMember(gymId, id, fields) {
 }
 function deleteMember(gymId, id) {
   db.members = db.members.filter((m) => !(m.gym_id === gymId && m.id === id));
+  // 연관 데이터 정리 — 고아 레코드가 통계·노쇼 집계에 "(삭제됨)"으로 남는 것 방지
+  db.pt_sessions = db.pt_sessions.filter((x) => !(x.gym_id === gymId && x.member_id === id));
+  db.attendance = db.attendance.filter((x) => !(x.gym_id === gymId && x.member_id === id));
+  db.payments = (db.payments || []).filter((x) => !(x.gym_id === gymId && x.member_id === id));
+  db.bot_users = (db.bot_users || []).filter((x) => !(x.gym_id === gymId && x.member_id === id));
   save();
+}
+// 기존 데이터의 고아 레코드 청소 (회원이 이미 삭제된 세션·출석·결제)
+function purgeOrphans(gymId) {
+  const ids = new Set(members(gymId).map((m) => m.id));
+  const before = db.pt_sessions.length + db.attendance.length + (db.payments || []).length;
+  db.pt_sessions = db.pt_sessions.filter((x) => x.gym_id !== gymId || ids.has(x.member_id));
+  db.attendance = db.attendance.filter((x) => x.gym_id !== gymId || ids.has(x.member_id));
+  db.payments = (db.payments || []).filter((x) => x.gym_id !== gymId || ids.has(x.member_id));
+  const removed = before - (db.pt_sessions.length + db.attendance.length + (db.payments || []).length);
+  if (removed) save();
+  return removed;
 }
 function addPtSession(gymId, memberId, { trainer, date, time, status, feedback, homework }) {
   const s = { id: nextId(), gym_id: gymId, member_id: memberId, trainer, date, time, status, feedback: feedback || "", homework: homework || "" };
@@ -503,9 +519,10 @@ function noshowStats(gymId, days = 90) {
   }
   const list = Object.values(map).map((r) => {
     const m = member(gymId, r.member_id);
+    if (!m) return null; // 삭제된 회원의 잔여 기록은 집계에서 제외
     const total = r.noshow + r.done;
-    return { ...r, name: m ? m.name : "(삭제됨)", trainer: m ? m.pt_trainer : "", rate: total ? Math.round((r.noshow / total) * 100) : 0 };
-  });
+    return { ...r, name: m.name, trainer: m.pt_trainer || "", rate: total ? Math.round((r.noshow / total) * 100) : 0 };
+  }).filter(Boolean);
   const risky = list.filter((r) => r.noshow >= 2).sort((a, b) => b.noshow - a.noshow);
   return { list: list.sort((a, b) => b.noshow - a.noshow), risky, totalNoshow: list.reduce((s, r) => s + r.noshow, 0) };
 }
@@ -513,7 +530,8 @@ function noshowStats(gymId, days = 90) {
 function upcomingSessions(gymId, dayOffset = 1) {
   const d = todayPlus(dayOffset);
   return byGym("pt_sessions", gymId).filter((x) => x.date === d && x.status === "예약")
-    .map((x) => { const m = member(gymId, x.member_id); return { ...x, name: m ? m.name : "(삭제됨)", phone: m ? m.phone : "" }; })
+    .map((x) => { const m = member(gymId, x.member_id); return m ? { ...x, name: m.name, phone: m.phone } : null; })
+    .filter(Boolean)
     .sort((a, b) => String(a.time).localeCompare(String(b.time)));
 }
 
@@ -633,6 +651,6 @@ module.exports = {
   upsertMember, updateMember, deleteMember, addPtSession, ptSessions, updatePtSession, deletePtSession,
   payments, addPayment, deletePayment, addAttendance, removeAttendance,
   setLeadStatus, setRequestStatus, addSendLog, notifyMember, runAutoSends, metrics,
-  convertLead, confirmReservation, expireOverdue, expiryBoard, noshowStats, upcomingSessions, leadFunnel, products, getProduct, addProduct, deleteProduct, applyProduct,
+  convertLead, confirmReservation, purgeOrphans, expireOverdue, expiryBoard, noshowStats, upcomingSessions, leadFunnel, products, getProduct, addProduct, deleteProduct, applyProduct,
   unsubToken, verifyUnsubToken, setUnsubscribed,
 };
