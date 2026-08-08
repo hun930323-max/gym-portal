@@ -146,8 +146,25 @@ ${err ? `<div class="flash err">${esc(err)}</div>` : ""}
 function statCard(k, v, sub, warn) {
   return `<div class="card ${warn ? "warn" : ""}"><div class="k">${esc(k)}</div><div class="v">${v}${sub ? ` <small>${esc(sub)}</small>` : ""}</div></div>`;
 }
-function dashboardBody(m) {
+function dashboardBody(m, ctx) {
+  ctx = ctx || {};
   const names = (arr) => arr.slice(0, 4).map((x) => esc(x.name)).join(", ") + (arr.length > 4 ? " 외" : "");
+  const eb = ctx.expiry || { d3: [], d7: [], over: [] };
+  const up = ctx.upcoming || [];
+  const risky = (ctx.noshow && ctx.noshow.risky) || [];
+  const chip = (x, cls) => `<a href="/members/${x.id}" class="badge ${cls}" style="text-decoration:none;margin:0 4px 4px 0;display:inline-block">${esc(x.name)} ${x.dday < 0 ? `${-x.dday}일 경과` : `D-${x.dday}`}</a>`;
+  const actionPanel = (eb.over.length || eb.d3.length || eb.d7.length) ? `<div class="panel" style="border-left:3px solid #E5484D">
+<h2>🔴 지금 연락해야 할 회원 <span class="muted" style="font-size:12px;font-weight:400">— 만료 임박·경과 · 이름을 누르면 회원 카드로 이동</span></h2>
+${eb.over.length ? `<div style="margin-bottom:10px"><b>만료됨 (${eb.over.length}명)</b><div style="margin-top:6px">${eb.over.slice(0, 12).map((x) => chip(x, "b-red")).join("")}${eb.over.length > 12 ? `<span class="muted">외 ${eb.over.length - 12}명</span>` : ""}</div></div>` : ""}
+${eb.d3.length ? `<div style="margin-bottom:10px"><b>3일 내 만료 (${eb.d3.length}명)</b><div style="margin-top:6px">${eb.d3.map((x) => chip(x, "b-gold")).join("")}</div></div>` : ""}
+${eb.d7.length ? `<div><b>7일 내 만료 (${eb.d7.length}명)</b><div style="margin-top:6px">${eb.d7.map((x) => chip(x, "b-gray")).join("")}</div></div>` : ""}
+<div class="muted" style="margin-top:12px">* D-7 / D-3 / 당일에는 재등록 안내 알림톡이 자동 발송됩니다.</div>
+</div>` : "";
+  const tomorrowPanel = `<div class="panel"><h2>📅 내일 PT 예약 <span class="muted" style="font-size:12px;font-weight:400">— 전날 저녁 리마인드 자동 발송 대상</span></h2>
+${up.length ? `<table><thead><tr><th>시간</th><th>회원</th><th>강사</th><th></th></tr></thead><tbody>${up.map((x) => `<tr><td><b>${esc(x.time || "-")}</b></td><td>${esc(x.name)}</td><td>${esc(x.trainer || "미지정")}</td><td><a class="btn sm gray" href="/members/${x.member_id}">관리</a></td></tr>`).join("")}</tbody></table>` : `<p class="muted">내일 예정된 PT 예약이 없습니다.</p>`}
+${risky.length ? `<div style="margin-top:16px"><b>⚠️ 노쇼 주의 회원</b> <span class="muted">(최근 90일 2회 이상)</span>
+<div style="margin-top:6px">${risky.slice(0, 8).map((r) => `<a href="/members/${r.member_id}" class="badge b-red" style="text-decoration:none;margin:0 4px 4px 0;display:inline-block">${esc(r.name)} 노쇼 ${r.noshow}회 (${r.rate}%)</a>`).join("")}</div></div>` : ""}
+</div>`;
   return `<h1>대시보드</h1><div class="sub">전체 회원 ${m.totalMembers}명 · 실시간 현황</div>
 <div class="cards">
 ${statCard("오늘 출석", m.todayAtt, "명")}
@@ -161,6 +178,14 @@ ${statCard("만료 임박(7일)", m.expiring.length, "명", m.expiring.length > 
 ${statCard("휴면(2주+)", m.dormant.length, "명", m.dormant.length > 0)}
 ${statCard("PT 소진 임박", m.ptLow.length, "명", m.ptLow.length > 0)}
 </div>
+<div class="cards">
+${statCard("만료된 회원", m.expired || 0, "명", (m.expired || 0) > 0)}
+${statCard("내일 PT 예약", m.tomorrowPt || 0, "건")}
+${statCard("노쇼(기간내)", m.noshow || 0, "건", (m.noshow || 0) > 0)}
+${statCard("전체 회원", m.totalMembers, "명")}
+</div>
+${actionPanel}
+${tomorrowPanel}
 <div class="panel"><h2>⚠️ 관리 필요 회원</h2>
 <div class="row">
 <div><b>만료 임박</b><div class="muted">${m.expiring.length ? names(m.expiring) : "없음"}</div></div>
@@ -173,7 +198,7 @@ ${statCard("PT 소진 임박", m.ptLow.length, "명", m.ptLow.length > 0)}
 
 function memberRow(m, D) {
   const dday = D.ddayOf(m.expire_date);
-  const exp = dday == null ? "-" : (dday < 0 ? `<span class="badge b-red">만료</span>` : dday <= 7 ? `<span class="badge b-gold">D-${dday}</span>` : `D-${dday}`);
+  const exp = dday == null ? "-" : (dday < 0 ? `<span class="badge b-red">만료 ${-dday}일</span>` : dday <= 3 ? `<span class="badge b-red">D-${dday}</span>` : dday <= 7 ? `<span class="badge b-gold">D-${dday}</span>` : `D-${dday}`);
   const pt = (m.pt_total || 0) > 0 ? `${m.pt_remain}/${m.pt_total}회` : "-";
   return `<tr>
 <td><b>${esc(m.name)}</b></td><td>${esc(maskPhone(m.phone))}</td><td>${esc(m.membership_type)}</td>
@@ -301,13 +326,46 @@ function ptBody(list, D, ctx) {
     <td>${esc(m.pt_expire || "-")}</td><td><a class="btn sm gray" href="/members/${m.id}">관리</a></td></tr>`;
   }).join("") || `<tr><td colspan="6" class="muted">${ctx && ctx.isStaff ? "담당 PT 회원이 없습니다. (회원의 'PT담당강사'가 내 담당명과 같아야 표시됩니다)" : "PT 이용권 회원이 없습니다."}</td></tr>`;
   const staffMode = !!(ctx && ctx.isStaff);
+  const up = (ctx && ctx.upcoming) || [];
+  const ns = (ctx && ctx.noshow) || null;
+  const upPanel = `<div class="panel"><h2>📅 내일 예약 (${up.length}건)</h2>
+${up.length ? `<table><thead><tr><th>시간</th><th>회원</th><th>강사</th><th></th></tr></thead><tbody>${up.map((x) => `<tr><td><b>${esc(x.time || "-")}</b></td><td>${esc(x.name)}</td><td>${esc(x.trainer || "미지정")}</td><td><a class="btn sm gray" href="/members/${x.member_id}">관리</a></td></tr>`).join("")}</tbody></table>
+<p class="muted" style="margin-top:10px">* 오늘 저녁 자동으로 리마인드 알림톡이 발송됩니다.</p>` : `<p class="muted">내일 예정된 예약이 없습니다.</p>`}</div>`;
+  const nsRows = ns ? ns.list.filter((r) => r.noshow > 0 || r.cancel > 0).slice(0, 20).map((r) => `<tr><td><b>${esc(r.name)}</b></td><td>${esc(r.trainer || "-")}</td><td>${r.done}회</td>
+<td>${r.noshow ? `<span class="badge ${r.noshow >= 2 ? "b-red" : "b-gold"}">${r.noshow}회</span>` : "0회"}</td><td>${r.cancel}회</td><td>${r.rate}%</td><td>${esc(r.last || "-")}</td>
+<td><a class="btn sm gray" href="/members/${r.member_id}">관리</a></td></tr>`).join("") : "";
+  const nsPanel = ns ? `<div class="panel"><h2>🚫 노쇼 · 취소 현황 <span class="muted" style="font-size:12px;font-weight:400">— 최근 90일 · 총 노쇼 ${ns.totalNoshow}건</span></h2>
+${nsRows ? `<table><thead><tr><th>회원</th><th>담당</th><th>완료</th><th>노쇼</th><th>취소</th><th>노쇼율</th><th>최근 노쇼</th><th></th></tr></thead><tbody>${nsRows}</tbody></table>
+<p class="muted" style="margin-top:10px">* 노쇼 2회 이상은 <span class="badge b-red">빨간색</span>으로 표시됩니다. 세션 상태를 '노쇼'로 저장하면 집계에 반영되고 PT 잔여는 차감되지 않습니다.</p>` : `<p class="muted">최근 90일간 노쇼·취소 기록이 없습니다. 👍</p>`}</div>` : "";
   return `<h1>${staffMode ? "내 PT 회원" : "PT 회원 관리"}</h1><div class="sub">${staffMode ? `담당 ${esc(ctx.trainerName || "")} · ${list.length}명 — 회원을 눌러 세션 피드백·숙제를 입력하세요` : `PT 이용권 보유 ${list.length}명 · 잔여·강사·세션 관리`}</div>
 <div class="panel"><h2>${staffMode ? "담당 회원 목록" : "PT 회원 목록"}</h2>
 <table><thead><tr><th>이름</th><th>전화</th><th>담당강사</th><th>이용권</th><th>유효기간</th><th></th></tr></thead>
-<tbody>${rows}</tbody></table></div>`;
+<tbody>${rows}</tbody></table></div>
+${upPanel}
+${nsPanel}`;
 }
-function reportsBody(m, period) {
+function reportsBody(m, period, fn) {
   const label = period === "month" ? "월간" : "주간";
+  const bar = (pct, color) => `<div style="background:#EEF1F4;border-radius:6px;height:10px;overflow:hidden;max-width:220px"><div style="width:${Math.max(0, Math.min(100, pct))}%;height:100%;background:${color}"></div></div>`;
+  const funnelPanel = fn ? `<div class="panel"><h2>🎯 상담 전환율 <span class="muted" style="font-size:12px;font-weight:400">— 최근 ${fn.days}일</span></h2>
+<div class="cards" style="margin-bottom:16px">
+${statCard("상담 신청", fn.total, "건")}
+${statCard("연락 완료", fn.contacted, `${fn.contactRate}%`)}
+${statCard("등록 전환", fn.done, `${fn.closeRate}%`, false)}
+${statCard("전환 매출", won(fn.revenue), fn.done ? `객단가 ${won(fn.avgTicket)}` : "")}
+</div>
+<table><tbody>
+<tr><th style="width:150px">① 상담 신청</th><td>${fn.total}건 ${bar(100, "#5B8DEF")}</td></tr>
+<tr><th>② 연락 완료</th><td>${fn.contacted}건 · 전체의 ${fn.contactRate}% ${bar(fn.contactRate, "#F2A93B")}</td></tr>
+<tr><th>③ 등록 전환</th><td><b>${fn.done}건 · 전체의 ${fn.closeRate}%</b> (연락한 건 중 ${fn.closeFromContact}%) ${bar(fn.closeRate, "#1E9E5A")}</td></tr>
+<tr><th>미처리 / 보류</th><td>미처리 ${fn.pending}건 · 보류 ${fn.hold}건</td></tr>
+</tbody></table>
+${fn.interests.length ? `<h2 style="margin-top:22px;font-size:15px">관심분야별 전환</h2>
+<table><thead><tr><th>관심분야</th><th>신청</th><th>등록</th><th>전환율</th></tr></thead><tbody>
+${fn.interests.map((r) => `<tr><td><b>${esc(r.interest)}</b></td><td>${r.total}건</td><td>${r.done}건</td><td>${r.rate}% ${bar(r.rate, r.rate >= 50 ? "#1E9E5A" : "#F2A93B")}</td></tr>`).join("")}
+</tbody></table>` : ""}
+<div class="muted" style="margin-top:12px">* 전환 매출은 상담을 통해 등록한 회원의 누적 결제액입니다. 광고비 대비 효과를 판단하는 기준이 됩니다.</div>
+</div>` : "";
   return `<h1>${label} 리포트</h1><div class="sub">최근 ${period === "month" ? 30 : 7}일 요약</div>
 <div class="tabs"><a href="/reports?period=week" class="${period !== "month" ? "on" : ""}">주간</a><a href="/reports?period=month" class="${period === "month" ? "on" : ""}">월간</a></div>
 <div class="cards">
@@ -323,10 +381,12 @@ ${statCard("PT 예약", m.ptRes, "건")}
 <tr><th>방문 연인원</th><td>${m.visits}명</td></tr>
 <tr><th>PT 예약</th><td>${m.ptRes}건</td></tr>
 <tr><th>상담/요청 접수</th><td>상담 ${m.leadsNew}건 · 요청 ${m.reqNew}건</td></tr>
-<tr><th>관리 필요</th><td>만료임박 ${m.expiring.length}명 · 휴면 ${m.dormant.length}명 · PT소진임박 ${m.ptLow.length}명</td></tr>
+<tr><th>관리 필요</th><td>만료임박 ${m.expiring.length}명 · 만료됨 ${m.expired || 0}명 · 휴면 ${m.dormant.length}명 · PT소진임박 ${m.ptLow.length}명</td></tr>
+<tr><th>PT 노쇼</th><td>${m.noshow || 0}건</td></tr>
 </tbody></table>
 <div class="muted" style="margin-top:12px">* 실서비스에서는 이 리포트가 매주 월요일 사장님 카톡으로 자동 발송됩니다.</div>
-</div>`;
+</div>
+${funnelPanel}`;
 }
 function productsBody(list) {
   const rows = list.map((p) => `<tr><td><b>${esc(p.name)}</b></td><td>${p.months ? p.months + "개월" : "-"}</td><td>${p.pt_count ? "PT " + p.pt_count + "회" : "-"}</td><td><b>${won(p.price)}</b></td>
@@ -405,6 +465,7 @@ ${(() => {
 ${autoRow("재등록 리마인드", "회원권 만료 D-7 / D-3 / 당일", "renew", s.auto_renew)}
 ${autoRow("휴면 케어", "최근 2주+ 미방문 회원", "dormant", s.auto_dormant)}
 ${autoRow("PT 소진 임박", "PT 잔여 ≤ 2회 회원", "ptlow", s.auto_ptlow)}
+${autoRow("PT 예약 리마인드", "내일 예정된 PT 예약 (노쇼 방지)", "remind", s.auto_remind)}
 </tbody></table>
 <form method="POST" action="/sends/run" style="margin-top:14px"><button class="btn dark">▶ 지금 자동 발송 실행</button></form>
 <p class="muted" style="margin-top:8px">· 같은 대상에게 중복 발송되지 않습니다. · 매일 자동 실행은 크론(유료 전환 후 Render Cron) 또는 외부 스케줄러가 <code>/cron/autosends?key=CRON_SECRET</code>를 호출하도록 설정하세요.</p>

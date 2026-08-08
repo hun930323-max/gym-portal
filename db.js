@@ -444,9 +444,110 @@ function runAutoSends(gymId) {
       }
     }
   }
+  // 4) PT 예약 전날 리마인드 (노쇼 방지)
+  out.remind = 0;
+  if (s.auto_remind !== false) {
+    const tomorrow = todayPlus(1);
+    const ses = byGym("pt_sessions", gymId).filter((x) => x.date === tomorrow && x.status === "예약");
+    for (const x of ses) {
+      const m = member(gymId, x.member_id);
+      if (!m || !m.phone) continue;
+      const msg = `[${gymName}] PT 수업 하루 전 안내\n${m.name}님, 내일 ${x.date} ${x.time || ""} ${x.trainer ? x.trainer + " 트레이너" : ""} 수업이 예정돼 있어요.\n변경이 필요하시면 미리 알려주세요! 💪`;
+      if (trySend(m, "예약리마인드", msg, `remind:${x.id}`)) out.remind++;
+    }
+  }
+  // 5) 만료 회원 자동 정리 (만료일 경과 → 상태 표시)
+  out.expired = expireOverdue(gymId);
   setSettings(gymId, { autosend_last: new Date().toISOString().slice(0, 16).replace("T", " ") });
-  out.total = out.renew + out.dormant + out.ptlow;
+  out.total = out.renew + out.dormant + out.ptlow + out.remind;
   return out;
+}
+
+// ── 회원권 만료 자동 처리 ──
+// 만료일이 지난 회원을 '만료' 상태로 표시 (데이터는 보존 · 재등록 시 자동 해제)
+function expireOverdue(gymId) {
+  const t = dayIdx(todayPlus(0));
+  let cnt = 0;
+  for (const m of members(gymId)) {
+    if (!m.expire_date) continue;
+    const over = dayIdx(m.expire_date) < t;
+    if (over && !m.expired) { m.expired = true; m.expired_at = todayPlus(0); cnt++; }
+    else if (!over && m.expired) { m.expired = false; m.expired_at = null; cnt++; } // 재등록 시 자동 해제
+  }
+  if (cnt) save();
+  return cnt;
+}
+// 만료 임박·경과 회원 (대시보드 고정 표시용)
+function expiryBoard(gymId) {
+  const t = dayIdx(todayPlus(0));
+  const rows = members(gymId).filter((m) => m.expire_date).map((m) => ({ ...m, dday: dayIdx(m.expire_date) - t }));
+  return {
+    d3: rows.filter((r) => r.dday >= 0 && r.dday <= 3).sort((a, b) => a.dday - b.dday),
+    d7: rows.filter((r) => r.dday > 3 && r.dday <= 7).sort((a, b) => a.dday - b.dday),
+    over: rows.filter((r) => r.dday < 0).sort((a, b) => b.dday - a.dday),
+  };
+}
+
+// ── 노쇼 관리 ──
+// 회원별 노쇼 횟수 + 최근 노쇼일. 완료 대비 노쇼 비율이 높은 회원을 위험군으로 분류
+function noshowStats(gymId, days = 90) {
+  const cut = dayIdx(todayPlus(0)) - days;
+  const ses = byGym("pt_sessions", gymId).filter((x) => dayIdx(x.date) > cut);
+  const map = {};
+  for (const x of ses) {
+    const k = x.member_id;
+    if (!map[k]) map[k] = { member_id: k, noshow: 0, done: 0, cancel: 0, last: "" };
+    if (x.status === "노쇼") { map[k].noshow++; if (x.date > map[k].last) map[k].last = x.date; }
+    else if (x.status === "완료") map[k].done++;
+    else if (x.status === "취소") map[k].cancel++;
+  }
+  const list = Object.values(map).map((r) => {
+    const m = member(gymId, r.member_id);
+    const total = r.noshow + r.done;
+    return { ...r, name: m ? m.name : "(삭제됨)", trainer: m ? m.pt_trainer : "", rate: total ? Math.round((r.noshow / total) * 100) : 0 };
+  });
+  const risky = list.filter((r) => r.noshow >= 2).sort((a, b) => b.noshow - a.noshow);
+  return { list: list.sort((a, b) => b.noshow - a.noshow), risky, totalNoshow: list.reduce((s, r) => s + r.noshow, 0) };
+}
+// 내일 예정된 PT 예약 (리마인드 대상 미리보기)
+function upcomingSessions(gymId, dayOffset = 1) {
+  const d = todayPlus(dayOffset);
+  return byGym("pt_sessions", gymId).filter((x) => x.date === d && x.status === "예약")
+    .map((x) => { const m = member(gymId, x.member_id); return { ...x, name: m ? m.name : "(삭제됨)", phone: m ? m.phone : "" }; })
+    .sort((a, b) => String(a.time).localeCompare(String(b.time)));
+}
+
+// ── 리드 전환율 퍼널 ──
+function leadFunnel(gymId, days = 30) {
+  const cut = dayIdx(todayPlus(0)) - days;
+  const all = leads(gymId).filter((l) => !l.created_at || dayIdx(String(l.created_at).slice(0, 10)) > cut);
+  const isDone = (l) => l.status === "등록" || l.status === "등록완료" || l.converted_member_id;
+  const contacted = all.filter((l) => l.status !== "신규");
+  const done = all.filter(isDone);
+  const pct = (a, b) => (b ? Math.round((a / b) * 100) : 0);
+  // 관심분야별 집계
+  const byInterest = {};
+  all.forEach((l) => {
+    const k = (l.interest || "미지정").trim() || "미지정";
+    if (!byInterest[k]) byInterest[k] = { interest: k, total: 0, done: 0 };
+    byInterest[k].total++; if (isDone(l)) byInterest[k].done++;
+  });
+  const interests = Object.values(byInterest).map((r) => ({ ...r, rate: pct(r.done, r.total) })).sort((a, b) => b.total - a.total);
+  // 전환된 리드의 매출 기여
+  const revenue = done.reduce((s, l) => {
+    if (!l.converted_member_id) return s;
+    return s + payments(gymId, l.converted_member_id).reduce((a, p) => a + (Number(p.amount) || 0), 0);
+  }, 0);
+  return {
+    days, total: all.length, contacted: contacted.length, done: done.length,
+    pending: all.filter((l) => l.status === "신규").length,
+    hold: all.filter((l) => l.status === "보류").length,
+    contactRate: pct(contacted.length, all.length),
+    closeRate: pct(done.length, all.length),
+    closeFromContact: pct(done.length, contacted.length),
+    interests, revenue,
+    avgTicket: done.length ? Math.round(revenue / done.length) : 0,
+  };
 }
 
 // ── 집계(대시보드/리포트) ──
@@ -476,6 +577,9 @@ function metrics(gymId, days = 7) {
     leadsNew: leads(gymId).filter((l) => l.status === "신규").length,
     reqNew: requests(gymId).filter((r) => r.status === "접수").length,
     totalMembers: ms.length,
+    expired: ms.filter((m) => m.expired).length,
+    noshow: noshowStats(gymId, days).totalNoshow,
+    tomorrowPt: byGym("pt_sessions", gymId).filter((x) => x.date === todayPlus(1) && x.status === "예약").length,
   };
 }
 
@@ -529,6 +633,6 @@ module.exports = {
   upsertMember, updateMember, deleteMember, addPtSession, ptSessions, updatePtSession, deletePtSession,
   payments, addPayment, deletePayment, addAttendance, removeAttendance,
   setLeadStatus, setRequestStatus, addSendLog, notifyMember, runAutoSends, metrics,
-  convertLead, confirmReservation, products, getProduct, addProduct, deleteProduct, applyProduct,
+  convertLead, confirmReservation, expireOverdue, expiryBoard, noshowStats, upcomingSessions, leadFunnel, products, getProduct, addProduct, deleteProduct, applyProduct,
   unsubToken, verifyUnsubToken, setUnsubscribed,
 };

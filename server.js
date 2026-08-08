@@ -156,7 +156,12 @@ app.post("/account/password", auth, (req, res) => {
 });
 
 // ── 대시보드 ──
-app.get("/dashboard", auth, notStaff, (req, res) => page(req, res, "dashboard", "대시보드", V.dashboardBody(D.metrics(req.gymId, 7))));
+app.get("/dashboard", auth, notStaff, (req, res) => {
+  D.expireOverdue(req.gymId); // 조회 시점에 만료 상태 최신화
+  page(req, res, "dashboard", "대시보드", V.dashboardBody(D.metrics(req.gymId, 7), {
+    expiry: D.expiryBoard(req.gymId), upcoming: D.upcomingSessions(req.gymId, 1), noshow: D.noshowStats(req.gymId, 90),
+  }));
+});
 
 // ── 회원 관리 ──
 app.get("/members/sample.csv", auth, notStaff, (req, res) => {
@@ -279,7 +284,11 @@ app.get("/pt", auth, (req, res) => {
   const { f, e } = clearFlash(req);
   const base = req.isStaff ? D.staffMembers(req.gymId, req.trainerName) : D.ptMembers(req.gymId);
   const list = base.sort((a, b) => (a.pt_remain || 0) - (b.pt_remain || 0));
-  page(req, res, "pt", "PT 회원", V.ptBody(list, D, { isStaff: req.isStaff, trainerName: req.trainerName }), { flash: f, flashErr: e });
+  const ids = req.isStaff ? new Set(list.map((m) => m.id)) : null;
+  const up = D.upcomingSessions(req.gymId, 1).filter((x) => !ids || ids.has(x.member_id));
+  const ns = D.noshowStats(req.gymId, 90);
+  if (ids) ns.list = ns.list.filter((r) => ids.has(r.member_id)), ns.risky = ns.risky.filter((r) => ids.has(r.member_id)), ns.totalNoshow = ns.list.reduce((s, r) => s + r.noshow, 0);
+  page(req, res, "pt", "PT 회원", V.ptBody(list, D, { isStaff: req.isStaff, trainerName: req.trainerName, upcoming: up, noshow: ns }), { flash: f, flashErr: e });
 });
 app.post("/pt/:memberId/session", auth, (req, res) => {
   const b = req.body;
@@ -308,7 +317,9 @@ app.post("/pt/:memberId/session", auth, (req, res) => {
 // ── 리포트 ──
 app.get("/reports", auth, notStaff, (req, res) => {
   const period = req.query.period === "month" ? "month" : "week";
-  page(req, res, "reports", "리포트", V.reportsBody(D.metrics(req.gymId, period === "month" ? 30 : 7), period));
+  const days = period === "month" ? 30 : 7;
+  D.expireOverdue(req.gymId);
+  page(req, res, "reports", "리포트", V.reportsBody(D.metrics(req.gymId, days), period, D.leadFunnel(req.gymId, period === "month" ? 30 : 90)));
 });
 
 // ── 접수함 ──
@@ -383,17 +394,17 @@ app.post("/sends/toggle", auth, adminOnly, (req, res) => {
   D.setSettings(gid, { send_enabled: !s.send_enabled });
   res.redirect("/sends");
 });
-// 자동 발송 항목 ON/OFF (renew·dormant·ptlow)
+// 자동 발송 항목 ON/OFF (renew·dormant·ptlow·remind)
 app.post("/sends/auto/:type", auth, adminOnly, (req, res) => {
   const gid = adminGid(req); const t = req.params.type;
-  if (["renew", "dormant", "ptlow"].includes(t)) { const key = "auto_" + t; const s = D.getSettings(gid); D.setSettings(gid, { [key]: s[key] === false }); }
+  if (["renew", "dormant", "ptlow", "remind"].includes(t)) { const key = "auto_" + t; const s = D.getSettings(gid); D.setSettings(gid, { [key]: s[key] === false }); }
   res.redirect("/sends");
 });
 // 지금 자동 발송 실행 (운영자 수동 트리거)
 app.post("/sends/run", auth, adminOnly, (req, res) => {
   const gid = adminGid(req);
   const r = D.runAutoSends(gid);
-  flash(req, `자동 발송 실행 완료 — 재등록 ${r.renew} · 휴면 ${r.dormant} · PT소진 ${r.ptlow}건 발송 (중복 제외 ${r.skipped})`);
+  flash(req, `자동 발송 실행 완료 — 재등록 ${r.renew} · 휴면 ${r.dormant} · PT소진 ${r.ptlow} · 예약리마인드 ${r.remind || 0}건 발송 (중복 제외 ${r.skipped}) · 만료 정리 ${r.expired || 0}명`);
   res.redirect("/sends");
 });
 // 자동 발송 크론 (외부 스케줄러가 매일 1회 호출) — CRON_SECRET 필요
